@@ -62,8 +62,14 @@ SKIP=0
 AGENT_TIMEOUT=300  # seconds per LLM call
 
 # --- Helper: execute oc command with namespace context ---
+# stderr is discarded, not folded into stdout: `oc exec` writes "command
+# terminated with exit code N" to stderr when the remote command fails, and on a
+# clean namespace `ls` of a not-yet-created skills directory does exactly that.
+# With 2>&1 that message became the captured listing, so cleanup_skills would
+# "remove" a skill literally named `command terminated with exit code 2` and
+# report success on a namespace where there was nothing to remove.
 oc_exec() {
-  oc exec deployment/instance -n "$NAMESPACE" -c gateway -- "$@" 2>&1
+  oc exec deployment/instance -n "$NAMESPACE" -c gateway -- "$@" 2>/dev/null
 }
 
 # --- Helper: send message to gateway and capture reply ---
@@ -663,12 +669,18 @@ fi
 echo -e "  Model:      ${CYAN}$MODEL_CHECK${RESET}"
 
 # Test model connectivity
+# `|| true` is load-bearing: under set -e a failing command substitution aborts
+# the script on the spot. When the endpoint is rate-limited the ping blocks past
+# `timeout 30` and exits 124, so the whole test died here silently — no message,
+# no summary — and the fleet runner could only report it as a 33s "TIMEOUT".
+# The inconclusive branch below is the intended handling for a probe that does
+# not answer; let it be reached.
 echo -e "${DIM}Testing model connectivity...${RESET}"
 MODEL_TEST=$(timeout 30 oc exec deployment/instance -n "$NAMESPACE" -c gateway -- \
   node /app/dist/index.js --no-color agent \
   --session-id "preflight-$$" \
   --message "ping" \
-  --json 2>&1)
+  --json 2>&1) || true
 
 if echo "$MODEL_TEST" | grep -q "404 status code.*model_not_found"; then
   echo -e "${RED}✗ Model not available at LLM provider (404)${RESET}"
