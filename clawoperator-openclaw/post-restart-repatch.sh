@@ -120,7 +120,15 @@ elif [[ "$LLM_PROVIDER" == "litellm" && -n "${LLM_MODEL_NAME:-}" ]]; then
   if [[ "$LLM_MODEL_NAME" == claude-* ]]; then
     MODEL_CONTEXT_WINDOW=200000; MODEL_CONTEXT_TOKENS=180000; MODEL_MAX_TOKENS=8192
   elif [[ "$LLM_MODEL_NAME" == "qwen3-14b" ]]; then
+    # NOTE: qwen3-14b cannot drive the OpenClaw agent. The agent system prompt is
+    # ~28k tokens and the model answers it with a single EOS token, which OpenClaw
+    # surfaces as "incomplete_turn" / reason=format. Kept here only so the limits
+    # are right if it is used as a fallback for small, non-agent calls.
     MODEL_CONTEXT_WINDOW=40960; MODEL_CONTEXT_TOKENS=32768; MODEL_MAX_TOKENS=4096
+  elif [[ "$LLM_MODEL_NAME" == "llama-scout-17b" ]]; then
+    # Probed against the MaaS endpoint: 120k-token prompts are accepted.
+    # Keep in sync with switch-provider.sh.
+    MODEL_CONTEXT_WINDOW=131072; MODEL_CONTEXT_TOKENS=100000; MODEL_MAX_TOKENS=8192
   else
     MODEL_CONTEXT_WINDOW=128000; MODEL_CONTEXT_TOKENS=128000; MODEL_MAX_TOKENS=16384
   fi
@@ -251,6 +259,12 @@ if ("${MODEL_KEY}") {
   c.agents.defaults.model = c.agents.defaults.model || {};
   c.agents.defaults.models["${MODEL_KEY}"] = {alias: "${MODEL_ALIAS}"};
   c.agents.defaults.model.primary = "${MODEL_KEY}";
+  // The operator seeds a fallback chain of hosted OpenAI models. On a MaaS key
+  // scoped to a handful of models those all return 401, which costs ~3s per turn
+  // and buries the real primary-model error under six auth failures. Replace the
+  // chain with LLM_FALLBACK_MODELS (comma-separated, empty = no fallbacks).
+  c.agents.defaults.model.fallbacks = "${LLM_FALLBACK_MODELS:-}"
+    .split(",").map(function (s) { return s.trim(); }).filter(Boolean);
   ${MODEL_PROVIDER_PATCH}
 }
 
@@ -265,17 +279,32 @@ if ("${OTEL_ENDPOINT}") {
     metrics: false,
     logs: false,
     sampleRate: 1,
+    // 'enabled' is not optional: resolveContentCapturePolicy() bails out with
+    // NO_MODEL_CONTENT_CAPTURE unless captureContent.enabled === true, and the
+    // per-field flags below are only read after that gate passes. Without it the
+    // gen_ai spans still reach MLflow, but with no prompt or completion bodies.
     captureContent: {
+      enabled: true,
       inputMessages: true,
       outputMessages: true,
       toolInputs: true,
       toolOutputs: true,
+      toolDefinitions: true,
       systemPrompt: false
     }
   };
   c.env = c.env || {};
   c.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT = "${OTEL_ENDPOINT}";
   c.env.OTEL_EXPORTER_OTLP_TRACES_HEADERS = "${OTEL_HEADERS}";
+  // These used to be set as Deployment env vars by audience-reset.sh, but the
+  // operator owns the gateway container's env list and strips anything it did
+  // not put there. They have to live in openclaw.json's config.env to survive.
+  // Without the semconv opt-in the gen_ai spans carry metrics but no prompt or
+  // completion bodies, so MLflow shows the model call with empty inputs/outputs.
+  c.env.OTEL_SEMCONV_STABILITY_OPT_IN = "gen_ai_latest_experimental";
+  c.env.OTEL_EXPORTER_OTLP_TRACES_PROTOCOL = "http/protobuf";
+  c.env.OTEL_SERVICE_NAME = "openclaw-${NS}";
+  c.env.OTEL_RESOURCE_ATTRIBUTES = "openclaw.namespace=${NS}";
 }
 
 // 4. Plugin setup — use bundledDiscovery instead of plugins.allow (v2026.5.26+ schema)

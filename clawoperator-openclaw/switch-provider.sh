@@ -218,19 +218,31 @@ case "$TARGET_PROVIDER" in
     if [[ "$MODEL" == claude-* ]]; then
       CTX_WINDOW=200000; CTX_TOKENS=180000; MAX_TOKENS=8192
     elif [[ "$MODEL" == qwen3-14b ]]; then
-      CTX_WINDOW=131072; CTX_TOKENS=131072; MAX_TOKENS=8192
+      # MaaS serves qwen3-14b with a 40960-token ceiling (verified against the
+      # endpoint); claiming 131072 here makes OpenClaw overpack the context and
+      # the request fails with litellm.ContextWindowExceededError.
+      # NOTE: qwen3-14b cannot drive the OpenClaw agent either — it answers the
+      # ~28k-token agent system prompt with a single EOS token, which surfaces as
+      # "incomplete_turn" / reason=format. Use llama-scout-17b instead.
+      # Keep in sync with post-restart-repatch.sh.
+      CTX_WINDOW=40960; CTX_TOKENS=32768; MAX_TOKENS=4096
+    elif [[ "$MODEL" == llama-scout-17b ]]; then
+      # Probed against the MaaS endpoint: 120k-token prompts are accepted.
+      CTX_WINDOW=131072; CTX_TOKENS=100000; MAX_TOKENS=8192
     else
       CTX_WINDOW=128000; CTX_TOKENS=128000; MAX_TOKENS=16384
     fi
-    LITELLM_DOMAIN="${LLM_API_BASE_URL#https://}"
-    LITELLM_DOMAIN="${LITELLM_DOMAIN%/v1}"
-    LITELLM_DOMAIN="${LITELLM_DOMAIN%/}"
+    # LLM_API_BASE_URL may be given with or without a trailing /v1 — normalise to
+    # the root so we don't emit a doubled .../v1/v1 baseUrl.
+    LITELLM_ROOT="${LLM_API_BASE_URL%/}"
+    LITELLM_ROOT="${LITELLM_ROOT%/v1}"
+    LITELLM_DOMAIN="${LITELLM_ROOT#https://}"
     PROVIDER_PATCH="
       c.models = c.models || {};
       c.models.providers = c.models.providers || {};
       c.models.providers.openai = c.models.providers.openai || {};
       var p = c.models.providers.openai;
-      p.baseUrl = '${LLM_API_BASE_URL}/v1';
+      p.baseUrl = '${LITELLM_ROOT}/v1';
       p.apiKey = 'proxy-managed-credential';
       p.contextWindow = ${CTX_WINDOW};
       p.contextTokens = ${CTX_TOKENS};
