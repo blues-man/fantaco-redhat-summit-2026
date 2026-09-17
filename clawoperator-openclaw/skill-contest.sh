@@ -182,7 +182,26 @@ collect_ns() {
   local -a env_prefix=()
   [[ -n "$kcfg" ]] && env_prefix=(env "KUBECONFIG=$kcfg")
 
-  "${env_prefix[@]}" oc get ns "$ns" &>/dev/null || { echo "MISSING" > "${dest}.status"; return 0; }
+  # An expired token makes every API call fail, and the obvious `|| MISSING`
+  # turns that into "all 50 namespaces are gone" — a clean-looking report that
+  # is entirely false. Tell the two apart and abort loudly on auth.
+  local ns_err
+  if ! ns_err=$("${env_prefix[@]}" oc get ns "$ns" 2>&1 >/dev/null); then
+    if [[ "$ns_err" == *Unauthorized* || "$ns_err" == *"must be logged in"* || "$ns_err" == *"credentials"* ]]; then
+      echo "AUTHFAIL" > "${dest}.status"
+    else
+      echo "MISSING" > "${dest}.status"
+    fi
+    return 0
+  fi
+
+  # No gateway deployment means the namespace exists but OpenClaw was never
+  # provisioned into it. That is a very different fact from "this user built
+  # no skills", and reporting both as EMPTY hides a half-provisioned fleet.
+  if ! "${env_prefix[@]}" oc get deployment instance -n "$ns" &>/dev/null; then
+    echo "NOPOD" > "${dest}.status"
+    return 0
+  fi
 
   local out
   # `|| true` is deliberate: a pod that is gone, starting, or wedged must not
@@ -196,7 +215,8 @@ collect_ns() {
            done" 2>/dev/null) || true
 
   if [[ -z "$out" ]]; then
-    echo "EMPTY" > "${dest}.status"
+    # Reachable and provisioned, but nothing authored — a genuine zero.
+    echo "NOSKILLS" > "${dest}.status"
   else
     printf '%s' "$out" > "$dest"
     echo "OK" > "${dest}.status"
@@ -220,8 +240,26 @@ for ci in "${!CLUSTER_IDS[@]}"; do
   done
   wait
 
+  # Report the breakdown, not just the hits. A sweep that finds nothing because
+  # the fleet is half-built looks identical to one where nobody entered.
+  # `|| true` on every one: grep exits 1 when a status simply never occurred,
+  # and under `set -euo pipefail` that aborts the whole script mid-sweep.
+  n_auth=$(grep -lx AUTHFAIL "${RAW_DIR}/${cid}__"*.status 2>/dev/null | wc -l || true)
+  n_missing=$(grep -lx MISSING  "${RAW_DIR}/${cid}__"*.status 2>/dev/null | wc -l || true)
+  n_nopod=$(grep -lx NOPOD      "${RAW_DIR}/${cid}__"*.status 2>/dev/null | wc -l || true)
+  n_none=$(grep -lx NOSKILLS    "${RAW_DIR}/${cid}__"*.status 2>/dev/null | wc -l || true)
   found=$(find "$RAW_DIR" -name "${cid}__*.md" -type f 2>/dev/null | wc -l)
-  echo -e "  collected from ${GREEN}${found}${RESET} namespace(s)"
+
+  if (( n_auth > 0 )); then
+    echo -e "  ${RED}✗ ${n_auth} namespace(s) returned Unauthorized — the session token has expired.${RESET}"
+    echo -e "  ${RED}  Log in again and re-run; this report would be missing entries.${RESET}" >&2
+    exit 1
+  fi
+
+  echo -e "  entries from ${GREEN}${found}${RESET} namespace(s)"
+  (( n_none > 0 ))    && echo -e "  ${DIM}${n_none} provisioned but no skills authored${RESET}"
+  (( n_nopod > 0 ))   && echo -e "  ${YELLOW}⚠ ${n_nopod} namespace(s) have no OpenClaw instance — not provisioned${RESET}"
+  (( n_missing > 0 )) && echo -e "  ${DIM}${n_missing} namespace(s) do not exist${RESET}"
 done
 echo ""
 
