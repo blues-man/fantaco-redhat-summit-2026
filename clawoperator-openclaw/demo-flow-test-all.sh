@@ -125,10 +125,10 @@ fi
 # ── Run directory ─────────────────────────────────────────────────
 # Same GUID convention as post-restart-repatch.sh: the sandbox id embedded in
 # the API server hostname (api.ocp.<guid>.sandboxNNN.opentlc.com).
-CLUSTER_GUID=$(oc cluster-info 2>/dev/null | head -1 | sed 's|.*api\.ocp\.\([^.]*\)\..*|\1|') || true
+CLUSTER_GUID=$(oc whoami --show-server 2>/dev/null | sed -E 's|^https?://api\.(ocp\.)?(cluster-)?([^.:]+).*|\3|') || true
 CLUSTER_GUID=$(printf '%s' "$CLUSTER_GUID" | tr -cd 'a-zA-Z0-9-')
 if [[ -z "$CLUSTER_GUID" ]]; then
-  echo "Error: could not extract cluster GUID from 'oc cluster-info'" >&2
+  echo "Error: could not extract cluster GUID from 'oc whoami --show-server'" >&2
   exit 1
 fi
 

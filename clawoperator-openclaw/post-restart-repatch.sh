@@ -47,9 +47,9 @@ wait_for_exec_ready() {
 }
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-CLUSTER_GUID=$(oc cluster-info 2>/dev/null | head -1 | sed 's|.*api\.ocp\.\([^.]*\)\..*|\1|')
+CLUSTER_GUID=$(oc whoami --show-server 2>/dev/null | sed -E 's|^https?://api\.(ocp\.)?(cluster-)?([^.:]+).*|\3|')
 if [[ -z "$CLUSTER_GUID" ]]; then
-  echo "Error: could not extract cluster GUID from 'oc cluster-info'" >&2
+  echo "Error: could not extract cluster GUID from 'oc whoami --show-server'" >&2
   exit 1
 fi
 ENV_FILE="${SCRIPT_DIR}/../.env"

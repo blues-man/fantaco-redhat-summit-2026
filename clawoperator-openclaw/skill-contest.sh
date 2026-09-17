@@ -139,7 +139,7 @@ else
     echo -e "${RED}ERROR: not logged in to OpenShift. Run 'oc login' first.${RESET}" >&2
     exit 1
   fi
-  GUID=$(oc cluster-info 2>/dev/null | head -1 | sed 's|.*api\.ocp\.\([^.]*\)\..*|\1|')
+  GUID=$(oc whoami --show-server 2>/dev/null | sed -E 's|^https?://api\.(ocp\.)?(cluster-)?([^.:]+).*|\3|')
   [[ -z "$GUID" ]] && GUID="current"
   CLUSTER_IDS+=("$GUID")
   CLUSTER_KUBECONFIGS+=("")

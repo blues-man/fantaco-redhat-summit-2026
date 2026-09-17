@@ -87,7 +87,7 @@ if ! oc whoami &>/dev/null; then
   exit 1
 fi
 
-CLUSTER_GUID=$(oc cluster-info 2>/dev/null | head -1 | sed 's|.*api\.ocp\.\([^.]*\)\..*|\1|')
+CLUSTER_GUID=$(oc whoami --show-server 2>/dev/null | sed -E 's|^https?://api\.(ocp\.)?(cluster-)?([^.:]+).*|\3|')
 [[ -z "$CLUSTER_GUID" ]] && CLUSTER_GUID="default"
 
 # ── Load .env for the MaaS base URL ───────────────────────────────────
