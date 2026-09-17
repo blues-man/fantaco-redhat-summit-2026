@@ -13,13 +13,15 @@
 # What it patches:
 #   1. allowedOrigins — audience route host + broker domain
 #   2. Model — google/{GEMINI_MODEL} or openai/{LLM_MODEL_NAME} from .env
+#   2b. memorySearch embeddings — openai/{LLM_EMBEDDING_MODEL} from .env
 #   3. diagnostics.otel — full OTEL config block (if diagnostics-otel plugin installed)
 #   4. diagnostics-prometheus plugin — only if ServiceMonitor exists
 #   5. diagnostics-otel plugin — plugins.allow + plugins.entries
 #   6. langfuse-tracer plugin — only if Langfuse keys in .env + plugin files on disk
 #   7. Custom proxy domains — re-applies domains from .state/<cluster-guid>/custom-proxy-domains.csv
 #
-# Requires: .env sourced for LLM_PROVIDER, GEMINI_MODEL, LLM_MODEL_NAME, BROKER_DOMAIN
+# Requires: .env sourced for LLM_PROVIDER, GEMINI_MODEL, LLM_MODEL_NAME,
+#           LLM_EMBEDDING_MODEL, BROKER_DOMAIN
 # Does NOT restart the gateway — caller is responsible for restart timing.
 
 set -euo pipefail
@@ -278,6 +280,20 @@ if ("${MODEL_KEY}") {
   c.agents.defaults.model.fallbacks = "${LLM_FALLBACK_MODELS:-}"
     .split(",").map(function (s) { return s.trim(); }).filter(Boolean);
   ${MODEL_PROVIDER_PATCH}
+}
+
+// 2b. Memory search embeddings
+// Without a model here memorySearch falls back to the openai provider's default
+// (text-embedding-3-small), which the MaaS key is not scoped to — every turn logs
+// "[memory] sync failed: openai embeddings failed: 401". The provider block's
+// baseUrl and placeholder apiKey are reused, so the call goes out through the
+// egress proxy and picks up the injected credential like any other model call.
+if ("${LLM_EMBEDDING_MODEL:-}") {
+  c.agents = c.agents || {};
+  c.agents.defaults = c.agents.defaults || {};
+  c.agents.defaults.memorySearch = c.agents.defaults.memorySearch || {};
+  c.agents.defaults.memorySearch.provider = "openai";
+  c.agents.defaults.memorySearch.model = "${LLM_EMBEDDING_MODEL:-}";
 }
 
 // 3. diagnostics.otel
