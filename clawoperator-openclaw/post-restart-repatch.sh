@@ -379,9 +379,12 @@ if ("${LANGFUSE_ROUTE}") {
   try {
     // Check the MANIFEST, not index.js. The gateway refuses to start when
     // openclaw.plugin.json is missing, so guarding on index.js meant a partial
-    // `oc cp` (index.js lands, manifest fails) enabled a plugin the gateway
-    // could not load — permanent CrashLoopBackOff with the config pointing at
-    // a file that was never copied. Require both before enabling.
+    // copy (index.js lands, manifest fails) enabled a plugin the gateway could
+    // not load — permanent CrashLoopBackOff with the config pointing at a file
+    // that was never copied. Require both before enabling.
+    // NB: no backticks anywhere in this heredoc, and no stray dollar-braces.
+    // REPATCH_EOF is deliberately unquoted so the shell substitutes values in,
+    // which means it also runs backticks as commands.
     fs.statSync("/home/node/.openclaw/extensions/langfuse-tracer/openclaw.plugin.json");
     fs.statSync("/home/node/.openclaw/extensions/langfuse-tracer/index.js");
     c.plugins.entries["langfuse-tracer"] = {

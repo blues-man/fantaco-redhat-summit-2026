@@ -158,8 +158,7 @@ if [[ -z "$AUDIENCE_CODE" ]]; then
   done
 fi
 if [[ -z "$AUDIENCE_CODE" ]]; then
-  echo -e "${YELLOW}Note: No audience code set. Share URL will not be available.${RESET}"
-  echo -e "${DIM}Use --audience-code CODE to set one, or run audience-reset.sh first.${RESET}"
+  echo -e "${DIM}No audience code in local state — will read it back from the broker.${RESET}"
   echo ""
 fi
 
@@ -385,6 +384,24 @@ else
     || echo -e "  ${YELLOW}⚠${RESET} Could not parse reload response"
 fi
 echo ""
+
+# ── Read the audience code back from the broker ────────────────────
+# The broker is the only authority on this. It derives the audience id from the
+# first route's hostname (claw-<code>-<hash>) and — crucially — only when its
+# database is empty, so a plain reload keeps whatever code the previous audience
+# was loaded under. Trusting AUDIENCE_CODE from .state/<guid>/broker.env prints
+# a share URL that 404s the moment the two drift apart, which is how the code in
+# that file came to read 1a279 while the broker was serving 673a7.
+LIVE_CODE=$(oc exec "$BROKER_POD" -n "$BROKER_NS" -- \
+  curl -s "http://localhost:3000/status/api?key=${STATUS_KEY}" 2>/dev/null \
+  | python3 -c "import sys,json; print(json.load(sys.stdin).get('stats',{}).get('audience_id') or '')" 2>/dev/null || true)
+if [[ -n "$LIVE_CODE" && "$LIVE_CODE" != "$AUDIENCE_CODE" ]]; then
+  if [[ -n "$AUDIENCE_CODE" ]]; then
+    echo -e "  ${YELLOW}⚠${RESET} Audience code was ${DIM}${AUDIENCE_CODE}${RESET}, broker is serving ${BOLD}${LIVE_CODE}${RESET} — using the broker's"
+    echo ""
+  fi
+  AUDIENCE_CODE="$LIVE_CODE"
+fi
 
 # ── Save broker state ──────────────────────────────────────────────
 if [[ -n "$AUDIENCE_CODE" || -n "$STATUS_KEY" ]]; then
