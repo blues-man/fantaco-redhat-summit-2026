@@ -341,7 +341,28 @@ delete c.plugins.allow;  // remove legacy field if present
 c.plugins.bundledDiscovery = "compat";
 c.plugins.entries = c.plugins.entries || {};
 if ("${HAS_PROMETHEUS}" === "true") {
-  c.plugins.entries["diagnostics-prometheus"] = { enabled: true };
+  // A ServiceMonitor proves prometheus was *requested*, not that the plugin is
+  // installed — those are separate steps and the second one can fail. Enabling
+  // it regardless wedges the gateway exactly like the langfuse case below:
+  //   plugins.entries.diagnostics-prometheus: plugin not installed
+  // and it refuses to boot. It is an npm-installed plugin under a hashed
+  // project directory, so the path has to be searched rather than stat'd.
+  var promInstalled = false;
+  try {
+    var npmBase = "/home/node/.openclaw/npm/projects";
+    promInstalled = fs.readdirSync(npmBase).some(function (d) {
+      try {
+        return fs.statSync(npmBase + "/" + d +
+          "/node_modules/@openclaw/diagnostics-prometheus/dist/index.js").isFile();
+      } catch (e) { return false; }
+    });
+  } catch (e) { promInstalled = false; }
+
+  if (promInstalled) {
+    c.plugins.entries["diagnostics-prometheus"] = { enabled: true };
+  } else {
+    delete c.plugins.entries["diagnostics-prometheus"];
+  }
 }
 
 // 5. diagnostics-otel plugin (if OTEL backend detected)
