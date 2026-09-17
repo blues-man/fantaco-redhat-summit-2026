@@ -781,6 +781,23 @@ spec:
     insecureEdgeTerminationPolicy: Redirect
 EOF
 
+      # 1e-bis. Teach the operator the new audience origin.
+      #
+      # Attendees reach the gateway through this route, so the Control UI's
+      # allowedOrigins has to list it or the browser connection is refused with
+      # "Browser origin not allowed". post-restart-repatch.sh writes it into
+      # openclaw.json below, but that alone does not hold: the operator re-seeds
+      # gateway.controlUi.allowedOrigins from its own template on every pod
+      # start, resetting it to the instance route. spec.config.raw is merged in
+      # before that enrichment runs, so a value set here survives restarts.
+      # See set-audience-origins.sh, which repairs namespaces already drifted.
+      INSTANCE_HOST=$(oc get route instance -n "$NS" -o jsonpath='{.spec.host}' 2>/dev/null || true)
+      ORIGINS_JSON="\"https://${AUDIENCE_HOST}\""
+      [[ -n "$INSTANCE_HOST" ]] && ORIGINS_JSON="\"https://${INSTANCE_HOST}\", ${ORIGINS_JSON}"
+      oc patch claw instance -n "$NS" --type merge -p \
+        "{\"spec\":{\"config\":{\"raw\":{\"gateway\":{\"controlUi\":{\"allowedOrigins\":[${ORIGINS_JSON}]}}}}}}" \
+        >/dev/null 2>&1 || true
+
       # 1f. Ensure Langfuse proxy credential exists (for existing namespaces that
       #     were created before we added the langfuse credential to the Claw CR)
       if [[ -n "${LANGFUSE_PUBLIC_KEY:-}" && -n "${LANGFUSE_SECRET_KEY:-}" && -n "${LANGFUSE_ROUTE:-}" ]]; then
