@@ -356,12 +356,23 @@ if ("${OTEL_ENDPOINT}") {
 //    Auth is handled by the claw-operator proxy — keys are NOT in the gateway pod
 if ("${LANGFUSE_ROUTE}") {
   try {
+    // Check the MANIFEST, not index.js. The gateway refuses to start when
+    // openclaw.plugin.json is missing, so guarding on index.js meant a partial
+    // `oc cp` (index.js lands, manifest fails) enabled a plugin the gateway
+    // could not load — permanent CrashLoopBackOff with the config pointing at
+    // a file that was never copied. Require both before enabling.
+    fs.statSync("/home/node/.openclaw/extensions/langfuse-tracer/openclaw.plugin.json");
     fs.statSync("/home/node/.openclaw/extensions/langfuse-tracer/index.js");
     c.plugins.entries["langfuse-tracer"] = {
       enabled: true,
       hooks: { allowConversationAccess: true }
     };
-  } catch(e) { /* plugin files not present — skip */ }
+  } catch(e) {
+    // Files incomplete or absent — leave the plugin out entirely. A gateway
+    // with no Langfuse tracing still runs the demo; one that will not boot
+    // does not.
+    if (c.plugins && c.plugins.entries) delete c.plugins.entries["langfuse-tracer"];
+  }
 }
 
 fs.writeFileSync(f, JSON.stringify(c, null, 2));
