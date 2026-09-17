@@ -118,13 +118,24 @@ except Exception as e:
 " 2>/dev/null || echo ""
 }
 
+# --- Helper: fold Unicode spaces to a plain ASCII space ---
+# The model does not always separate words with U+0020. It reliably writes
+# "Def Leppard" (narrow no-break space) when recalling the band, so a
+# literal grep for "Def Leppard" never matched and step 5 scored 3/4 on every
+# single run — a false negative that looked like a memory failure. Normalise
+# both sides before comparing. Only whitespace is folded, so the `\|`
+# alternations the callers pass still reach grep as BRE.
+normalize_spaces() {
+  perl -CSAD -pe 's/[\x{00A0}\x{1680}\x{2000}-\x{200B}\x{202F}\x{205F}\x{2060}\x{3000}\x{FEFF}]/ /g'
+}
+
 # --- Helper: check if reply contains expected substring (case-insensitive) ---
 assert_contains() {
   local reply="$1"
   local expected="$2"
   local label="${3:-$expected}"
 
-  if echo "$reply" | grep -qi "$expected"; then
+  if printf '%s' "$reply" | normalize_spaces | grep -qi "$(printf '%s' "$expected" | normalize_spaces)"; then
     echo -e "    ${GREEN}✓${RESET} Found: $label"
     return 0
   else
@@ -139,7 +150,7 @@ assert_not_contains() {
   local unexpected="$2"
   local label="${3:-$unexpected}"
 
-  if echo "$reply" | grep -qi "$unexpected"; then
+  if printf '%s' "$reply" | normalize_spaces | grep -qi "$(printf '%s' "$unexpected" | normalize_spaces)"; then
     echo -e "    ${RED}✗${RESET} Unexpectedly found: $label"
     return 1
   else
@@ -566,7 +577,15 @@ step_7_network_isolation() {
     "https://api.nasa.gov/planetary/apod?api_key=DEMO_KEY" 2>/dev/null) || true
   code="${code:-000}"
 
-  if [[ "$code" == "000" ]]; then
+  # "000" means curl never completed a connection — which is what a blocked
+  # egress looks like, and *also* what a broken `oc exec` looks like. Those are
+  # opposite outcomes with identical output: during a DNS outage this check
+  # cheerfully reported "isolation working" when nothing had run at all. Prove
+  # the exec path itself works before reading 000 as proof of anything.
+  if ! oc exec deployment/instance -n "$NAMESPACE" -c gateway -- true 2>/dev/null; then
+    echo -e "    ${RED}✗${RESET} INCONCLUSIVE: cannot exec into the gateway — isolation not verified"
+    FAIL=$((FAIL + 1))
+  elif [[ "$code" == "000" ]]; then
     echo -e "    ${GREEN}✓${RESET} Network isolation working (egress refused, HTTP $code)"
     PASS=$((PASS + 1))
   else
