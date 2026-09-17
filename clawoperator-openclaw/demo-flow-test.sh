@@ -284,7 +284,19 @@ step_1_basic_interaction() {
 
 step_2_skill_friendly_greeter() {
   echo "  Creating friendly-greeter skill..."
-  local prompt='create a skill called friendly-greeter that when trigger responds with "Aloha <name>, Welcome to FantaCo". replace <name> with the name provided in the triggering prompt. If no name is given ask for one. No extra commentary, only one line output.'
+  # The trailing sentence about the description is load-bearing, not padding.
+  # Skill auto-triggering routes on the `description:` frontmatter line, never on
+  # the SKILL.md body — so whatever the model happens to write there decides
+  # whether "Greet George" fires the skill at all. Left to itself it writes
+  # something vague ("Greets user by name with Aloha message") and the router
+  # misses: measured 2/13 across the fleet. Asking for the literal greeting in
+  # the description takes it to 12/14, and 15 of 18 runs produce the same
+  # byte-identical string. Ask for the intent *and* the literal: demanding only
+  # the literal makes the model write the bare line with no "greets a person by
+  # name", which routes worse (3/6).
+  # Residual miss rate is still ~1 in 7, so the presenter's recovery line stays
+  # "Use the friendly-greeter skill. Greet George" — see step 2's retry below.
+  local prompt='create a skill called friendly-greeter that when trigger responds with "Aloha <name>, Welcome to FantaCo". replace <name> with the name provided in the triggering prompt. If no name is given ask for one. No extra commentary, only one line output. The skill description should say it greets a person by name with "Aloha <name>, Welcome to FantaCo".'
 
   local json reply
   json=$(send_message "$prompt" 180) || { FAIL=$((FAIL + 1)); return 1; }
