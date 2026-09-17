@@ -14,7 +14,7 @@
 #
 # Requirements:
 #   - OpenShift cluster with OpenClaw deployed
-#   - Working model configuration (llama-scout-17b or compatible)
+#   - Working model configuration (gpt-oss-120b or compatible)
 #   - MCP servers: customer, product, sales-order
 #   - Pre-existing skills: platform, quote-builder
 
@@ -57,8 +57,8 @@ PASS=0
 FAIL=0
 SKIP=0
 # Tool-driven steps (MCP customer lookups, skill creation, quote builder) chain
-# several model calls per turn, and llama-scout-17b runs ~10s to first byte, so
-# 120s times out on the later sections.
+# several model calls per turn, and the MaaS-hosted models run ~10s to first
+# byte, so 120s times out on the later sections.
 AGENT_TIMEOUT=300  # seconds per LLM call
 
 # --- Helper: execute oc command with namespace context ---
@@ -142,10 +142,45 @@ assert_not_contains() {
   fi
 }
 
+# Agent-authored skills land under the *agent's* workspace, not the shared one.
+# /home/node/.openclaw/workspace/skills holds the seeded skills (platform,
+# quote-builder); anything the main agent creates goes to .../workspace/main/skills.
+AGENT_SKILLS_DIR="/home/node/.openclaw/workspace/main/skills"
+PROPOSALS_DIR="/home/node/.openclaw/skill-workshop/proposals"
+
 # --- Helper: check if a skill directory exists ---
 skill_exists() {
   local skill_name="$1"
-  oc_exec test -d "/home/node/.openclaw/workspace/skills/$skill_name" &>/dev/null
+  oc_exec test -d "${AGENT_SKILLS_DIR}/$skill_name" &>/dev/null
+}
+
+# --- Helper: newest pending proposal id for a skill name ---
+# `skill_workshop action=create` does NOT write a skill — it files a PROPOSAL.md
+# under ~/.openclaw/skill-workshop/proposals/<name>-<date>-<hash>/ with status
+# `pending`. The skill only materialises on an explicit `apply`, which is what
+# the demo's "[Click on Skills]" step stands in for. Asserting on the skill
+# directory straight after the create prompt therefore always fails, however
+# well the model behaved.
+latest_proposal_id() {
+  local skill_name="$1"
+  new_proposal_ids | grep "^${skill_name}-" | head -1
+}
+
+# --- Helper: proposal ids filed during this run, newest first ---
+new_proposal_ids() {
+  local all
+  all=$(oc_exec sh -c "ls -1t '${PROPOSALS_DIR}' 2>/dev/null" | tr -d '\r' | grep -v '^$' || true)
+  if [[ -n "${PRE_EXISTING_PROPOSALS:-}" ]]; then
+    grep -Fxv -f <(printf '%s\n' "$PRE_EXISTING_PROPOSALS") <<< "$all" || true
+  else
+    printf '%s\n' "$all"
+  fi
+}
+
+# --- Helper: apply a pending proposal (the "approve" click in the live demo) ---
+apply_proposal() {
+  local proposal_id="$1"
+  oc_exec openclaw skills workshop apply "$proposal_id" --json &>/dev/null
 }
 
 # --- Helper: run a test step ---
@@ -254,14 +289,29 @@ step_2_skill_friendly_greeter() {
     echo "$reply" | sed 's/^/    /'
   fi
 
-  # Wait a moment for skill file to be written
+  # Wait a moment for the proposal to be written
   sleep 2
+
+  local proposal_id
+  proposal_id=$(latest_proposal_id "friendly-greeter")
+  if [[ -n "$proposal_id" ]]; then
+    echo -e "    ${GREEN}✓${RESET} Proposal filed: ${DIM}${proposal_id}${RESET}"
+    PASS=$((PASS + 1))
+  else
+    echo -e "    ${RED}✗${RESET} No friendly-greeter proposal was filed"
+    FAIL=$((FAIL + 1))
+    return 1
+  fi
+
+  # Stand in for the presenter clicking through Skills → approve.
+  echo "  Applying the proposal (the '[Click on Skills]' step)..."
+  apply_proposal "$proposal_id"
 
   if skill_exists "friendly-greeter"; then
     echo -e "    ${GREEN}✓${RESET} Skill directory created"
     PASS=$((PASS + 1))
   else
-    echo -e "    ${RED}✗${RESET} Skill directory not found"
+    echo -e "    ${RED}✗${RESET} Skill directory not found after apply"
     FAIL=$((FAIL + 1))
     return 1
   fi
@@ -280,6 +330,18 @@ step_2_skill_friendly_greeter() {
     PASS=$((PASS + 1))
   else
     FAIL=$((FAIL + 1))
+    # Distinguish "the skill is wrong" from "the skill is fine but the model did
+    # not pick it up off a bare 'Greet George'". Auto-selection depends on the
+    # description the model wrote into its own SKILL.md frontmatter, so it is the
+    # part most likely to drift between models. Diagnostic only — not scored.
+    echo "    Retrying with the skill named explicitly (diagnostic)..."
+    json=$(send_message "Use the friendly-greeter skill: Greet George") || json=""
+    reply=$(extract_reply "$json")
+    if echo "$reply" | grep -qi "Aloha George"; then
+      echo -e "    ${YELLOW}!${RESET} Skill works when named, but did not auto-trigger"
+    else
+      echo -e "    ${RED}✗${RESET} Skill does not produce the greeting even when named"
+    fi
   fi
 
   echo ""
@@ -333,18 +395,36 @@ step_4_skill_customer_notes() {
     echo "$reply" | sed 's/^/    /'
   fi
 
-  # Wait for skill to be created
+  # Wait for the proposal to be written
   sleep 2
 
-  # Check for any new skill directory (name may vary)
-  local new_skills
-  new_skills=$(oc_exec find /home/node/.openclaw/workspace/skills -maxdepth 1 -type d -newer /home/node/.openclaw/workspace/skills/quote-builder 2>/dev/null | wc -l)
+  # The model picks the skill name itself, so match on any pending proposal that
+  # is neither of the seeded skills. (The previous check counted
+  # `find -maxdepth 1 -type d -newer quote-builder`, which includes the skills
+  # directory itself and so reported success even when nothing was created.)
+  local proposal_id
+  proposal_id=$(new_proposal_ids | grep -v "^friendly-greeter-" | head -1)
 
-  if [[ "$new_skills" -gt 0 ]]; then
-    echo -e "    ${GREEN}✓${RESET} New skill directory created"
+  if [[ -n "$proposal_id" ]]; then
+    echo -e "    ${GREEN}✓${RESET} Proposal filed: ${DIM}${proposal_id}${RESET}"
     PASS=$((PASS + 1))
   else
-    echo -e "    ${RED}✗${RESET} No new skill directory found"
+    echo -e "    ${RED}✗${RESET} No notes-skill proposal was filed"
+    FAIL=$((FAIL + 1))
+    return 1
+  fi
+
+  echo "  Applying the proposal (the '[Click on Skills]' step)..."
+  apply_proposal "$proposal_id"
+
+  # Proposal ids are <skill-name>-<date>-<hash>; strip the two trailing segments.
+  local skill_name="${proposal_id%-*}"
+  skill_name="${skill_name%-*}"
+  if skill_exists "$skill_name"; then
+    echo -e "    ${GREEN}✓${RESET} Skill created: ${skill_name}"
+    PASS=$((PASS + 1))
+  else
+    echo -e "    ${RED}✗${RESET} Skill directory not found after apply: ${skill_name}"
     FAIL=$((FAIL + 1))
   fi
 }
@@ -505,27 +585,32 @@ cleanup_skills() {
   echo -e "${BOLD}Cleanup mode: removing test-created skills${RESET}"
   echo ""
 
-  for skill in "friendly-greeter"; do
-    if skill_exists "$skill"; then
-      echo "  Removing $skill..."
-      oc_exec rm -rf "/home/node/.openclaw/workspace/skills/$skill" &>/dev/null
+  # Every agent-authored skill lives under the agent workspace; the seeded
+  # platform/quote-builder skills live in the shared one and must survive.
+  local created
+  created=$(oc_exec sh -c "ls -1 '${AGENT_SKILLS_DIR}' 2>/dev/null" | tr -d '\r' | grep -v '^$' || true)
+  if [[ -n "$created" ]]; then
+    while IFS= read -r skill_name; do
+      echo "  Removing skill $skill_name..."
+      oc_exec rm -rf "${AGENT_SKILLS_DIR}/${skill_name}" &>/dev/null
       echo -e "    ${GREEN}✓${RESET} Removed"
-    else
-      echo -e "    ${DIM}$skill not found (already clean)${RESET}"
-    fi
-  done
+    done <<< "$created"
+  else
+    echo -e "    ${DIM}No agent-created skills (already clean)${RESET}"
+  fi
 
-  # Also remove any customer-notes variants
-  local notes_skills
-  notes_skills=$(oc_exec find /home/node/.openclaw/workspace/skills -maxdepth 1 -type d -name "*note*" 2>/dev/null | grep -v "^/home/node/.openclaw/workspace/skills$" || true)
-  if [[ -n "$notes_skills" ]]; then
-    while IFS= read -r skill_path; do
-      local skill_name
-      skill_name=$(basename "$skill_path")
-      echo "  Removing $skill_name..."
-      oc_exec rm -rf "$skill_path" &>/dev/null
-      echo -e "    ${GREEN}✓${RESET} Removed"
-    done <<< "$notes_skills"
+  # Proposals accumulate one directory per create attempt, so clear them too —
+  # otherwise the next run's latest_proposal_id picks up a stale proposal and
+  # reports a pass without the model having done anything.
+  local proposals
+  proposals=$(oc_exec sh -c "ls -1 '${PROPOSALS_DIR}' 2>/dev/null" | tr -d '\r' | grep -v '^$' || true)
+  if [[ -n "$proposals" ]]; then
+    while IFS= read -r proposal_id; do
+      echo "  Removing proposal $proposal_id..."
+      oc_exec rm -rf "${PROPOSALS_DIR}/${proposal_id}" &>/dev/null
+    done <<< "$proposals"
+    oc_exec sh -c "rm -f /home/node/.openclaw/skill-workshop/proposals.json" &>/dev/null
+    echo -e "    ${GREEN}✓${RESET} Proposals cleared"
   fi
 
   echo ""
@@ -626,6 +711,11 @@ else
 fi
 
 echo ""
+
+# Proposals are never garbage-collected, so a re-run without --cleanup would see
+# last run's pending proposals and score the skill steps as passing without the
+# model having produced anything. Snapshot what is already there and ignore it.
+PRE_EXISTING_PROPOSALS=$(oc_exec sh -c "ls -1 '${PROPOSALS_DIR}' 2>/dev/null" | tr -d '\r' | grep -v '^$' || true)
 
 # Run test steps
 START_TIME=$(date +%s)

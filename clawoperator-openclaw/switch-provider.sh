@@ -227,7 +227,14 @@ case "$TARGET_PROVIDER" in
       # Keep in sync with post-restart-repatch.sh.
       CTX_WINDOW=40960; CTX_TOKENS=32768; MAX_TOKENS=4096
     elif [[ "$MODEL" == llama-scout-17b ]]; then
+      # NOTE: llama-scout-17b calls tools correctly but narrates multi-step
+      # instructions instead of executing them. Use gpt-oss-120b for the demo.
       # Probed against the MaaS endpoint: 120k-token prompts are accepted.
+      CTX_WINDOW=131072; CTX_TOKENS=100000; MAX_TOKENS=8192
+    elif [[ "$MODEL" == gpt-oss-120b || "$MODEL" == qwen36-35b-a3b ]]; then
+      # Both decompose "create a skill that ..." into real tool calls against the
+      # full agent harness. Probed: 120k-token prompts are accepted.
+      # Keep in sync with post-restart-repatch.sh.
       CTX_WINDOW=131072; CTX_TOKENS=100000; MAX_TOKENS=8192
     else
       CTX_WINDOW=128000; CTX_TOKENS=128000; MAX_TOKENS=16384
@@ -486,7 +493,12 @@ print(json.dumps(c))
   # ── Restart gateway process (kill 1 preserves PVC config) ──
   echo -e "${BOLD}--- Restarting gateway process ---${RESET}"
   for NS in "${NAMESPACES[@]}"; do
-    KUBECONFIG="$CLUSTER_KUBECONFIG" oc exec deployment/instance -n "$NS" -c gateway -- kill 1 2>/dev/null
+    # Killing PID 1 tears down the container the exec session is attached to, so
+    # `oc exec` reports the lost connection as a non-zero exit. Under `set -e`
+    # that aborts the whole run part-way through the namespace list, leaving the
+    # remaining gateways un-restarted on the old model. The failure is expected —
+    # swallow it.
+    KUBECONFIG="$CLUSTER_KUBECONFIG" oc exec deployment/instance -n "$NS" -c gateway -- kill 1 2>/dev/null || true
     echo -e "  ${GREEN}✓${RESET} ${NS}"
   done
 

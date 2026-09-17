@@ -126,8 +126,20 @@ elif [[ "$LLM_PROVIDER" == "litellm" && -n "${LLM_MODEL_NAME:-}" ]]; then
     # are right if it is used as a fallback for small, non-agent calls.
     MODEL_CONTEXT_WINDOW=40960; MODEL_CONTEXT_TOKENS=32768; MODEL_MAX_TOKENS=4096
   elif [[ "$LLM_MODEL_NAME" == "llama-scout-17b" ]]; then
-    # Probed against the MaaS endpoint: 120k-token prompts are accepted.
+    # NOTE: llama-scout-17b handles the 28k-token agent harness and calls tools
+    # correctly, but it narrates multi-step instructions instead of executing
+    # them — "create a skill called X that ..." yields prose, not a write call.
+    # Use gpt-oss-120b for the demo. Probed: 120k-token prompts are accepted.
     # Keep in sync with switch-provider.sh.
+    MODEL_CONTEXT_WINDOW=131072; MODEL_CONTEXT_TOKENS=100000; MODEL_MAX_TOKENS=8192
+  elif [[ "$LLM_MODEL_NAME" == "gpt-oss-120b" ]]; then
+    # The model the demo flow is validated against: it picks the right tool out
+    # of a 166KB catalog and decomposes "create a skill that ..." into a single
+    # correct write call. Probed: 120k-token prompts are accepted.
+    MODEL_CONTEXT_WINDOW=131072; MODEL_CONTEXT_TOKENS=100000; MODEL_MAX_TOKENS=8192
+  elif [[ "$LLM_MODEL_NAME" == "qwen36-35b-a3b" ]]; then
+    # Also executes rather than narrates, but explores with shell commands first,
+    # which costs extra turns. Viable fallback if gpt-oss-120b is unavailable.
     MODEL_CONTEXT_WINDOW=131072; MODEL_CONTEXT_TOKENS=100000; MODEL_MAX_TOKENS=8192
   else
     MODEL_CONTEXT_WINDOW=128000; MODEL_CONTEXT_TOKENS=128000; MODEL_MAX_TOKENS=16384
