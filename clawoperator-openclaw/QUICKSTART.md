@@ -13,7 +13,7 @@ cd clawoperator-openclaw
 
 # ── Phase 1: Cluster-level setup (one-time) ──────────────────────────
 ./0-admin-setup.sh 1 50              # Step 1: Install operator, enable User Workload Monitoring, RBAC
-./deploy-logs-loki.sh                # Step 2: Centralized logging (Loki + S3)
+./deploy-logs-loki.sh                # Step 2: Centralized logging (Loki + S3) — needs AWS creds, see note
 ./deploy-dashboards-grafana.sh       # Step 3: Grafana dashboards (Prometheus + Loki data sources)
 ./deploy-traces-mlflow.sh            # Step 4: LLM trace collection (MLflow + OTEL)
 ./deploy-traces-langfuse.sh          # Step 5: LLM observability (Langfuse — populates .state/langfuse.env)
@@ -35,6 +35,8 @@ cd clawoperator-openclaw
 ./demo-preflight.sh 1 50             # Step 9: Pre-demo preflight check (pass/fail health checks)
 ./demo-urls.sh                       # Step 10: Stage-ready URLs, QR code, provider info
 ```
+
+`deploy-logs-loki.sh` is the one step with an external dependency: it creates an S3 bucket and IAM user via the `aws` CLI, so it needs working AWS credentials and an AWS-backed cluster. Everything else in Section A is cluster-only. Skipping it costs you centralized logs and Grafana's Loki data source; the Prometheus source, MLflow, Langfuse and the demo flow are unaffected.
 
 ### What audience-reset.sh does
 
@@ -169,6 +171,16 @@ Scale the demo beyond a single cluster by distributing audience members across m
 - A separate kubeconfig file per cluster (e.g. `~/.kube/config-cluster-fr9sv`)
 - `oc login` working for each kubeconfig
 
+Per-cluster vs shared, so you know what to repeat on cluster 2:
+
+| Repeat on every cluster | Deploy once, shared |
+|---|---|
+| operator + RBAC, MLflow, Langfuse, Grafana, `audience-reset.sh`, quotas, per-user API keys | the session broker (`deploy-broker-ocp.sh`) |
+
+MLflow and Langfuse are per-cluster because `post-restart-repatch.sh` points each gateway at the `mlflow`/`langfuse` route **in its own cluster** — a gateway cannot reach the other cluster's internal service. The broker is shared by design: it holds one route pool, so it must run on exactly one cluster and discover the rest through `clusters.csv`.
+
+Scripts derive `.state/<cluster-guid>/` from the API hostname and handle both shapes in use — `api.ocp.<guid>.sandboxNNNN.opentlc.com` (sandbox) and `api.cluster-<guid>.dyn.redhatworkshops.io` (RHDP workshop).
+
 ### Step 1: Create `clusters.csv`
 
 ```bash
@@ -199,6 +211,11 @@ export KUBECONFIG=~/.kube/config-cluster-w6hwm
 ### Step 3: Publish merged routes to broker
 
 ```bash
+# Point the current context at the cluster the broker runs on — the script
+# reads clusters.csv for route *discovery*, but finds the broker Deployment
+# itself through the ambient oc context.
+export KUBECONFIG=~/.kube/config-cluster-fr9sv
+
 # OCP broker (no AWS needed)
 ./update-broker-ocp.sh --rotate-status-key
 

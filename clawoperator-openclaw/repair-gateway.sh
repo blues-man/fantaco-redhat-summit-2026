@@ -106,7 +106,7 @@ cleanup_repair_pod() {
 }
 
 start_repair_pod() {
-  local ns="$1" node="$2"
+  local ns="$1" node="$2" fsgroup="$3"
 
   # A leftover pod from an interrupted run would be Completed or Terminating
   # and unusable; start from a known state.
@@ -124,6 +124,12 @@ metadata:
 spec:
   nodeName: ${node}
   restartPolicy: Never
+  # instance-home-pvc is group-owned by the gateway pod's fsGroup (drwxrws---).
+  # Without the same fsGroup the repair container runs as gid 1000 (node),
+  # is not a member of that group, and every write to /work is denied — the
+  # copy below then silently leaves the plugin half-written all over again.
+  securityContext:
+    fsGroup: ${fsgroup}
   containers:
   - name: repair
     image: ${OPENCLAW_IMAGE}
@@ -240,11 +246,17 @@ for i in $(seq "$START" "$END"); do
     N_FAILED=$((N_FAILED + 1)); FAILED_NS+=("$NS"); continue
   fi
 
+  FSGROUP=$(oc get pod "$POD" -n "$NS" -o jsonpath='{.spec.securityContext.fsGroup}' 2>/dev/null || true)
+  if [[ -z "$FSGROUP" ]]; then
+    echo -e "  ${RED}✗ ${NS}: cannot determine fsGroup for ${POD}${RESET}"
+    N_FAILED=$((N_FAILED + 1)); FAILED_NS+=("$NS"); continue
+  fi
+
   echo -e "  ${CYAN}${NS}${RESET}: ${BOLD}${MODE}${RESET} failure (node ${DIM}${NODE}${RESET})"
   N_NEEDS=$((N_NEEDS + 1))
   $CHECK_ONLY && continue
 
-  if ! start_repair_pod "$NS" "$NODE"; then
+  if ! start_repair_pod "$NS" "$NODE" "$FSGROUP"; then
     N_FAILED=$((N_FAILED + 1)); FAILED_NS+=("$NS"); continue
   fi
 
