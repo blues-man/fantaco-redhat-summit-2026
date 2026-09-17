@@ -1048,12 +1048,12 @@ SM_EOF
   fi
 
   oc exec deployment/instance -n "$NS" -c gateway -- \
-    node /app/dist/index.js plugins install @openclaw/diagnostics-prometheus@2026.5.26 2>&1 \
+    node /app/dist/index.js plugins install @openclaw/diagnostics-prometheus@2026.6.35 2>&1 \
     | grep -E "^(Installed|Already|Error)" || true
 
   if [[ -n "${MLFLOW_OTEL_ENDPOINT:-}" ]]; then
     oc exec deployment/instance -n "$NS" -c gateway -- \
-      node /app/dist/index.js plugins install @openclaw/diagnostics-otel@2026.5.26 2>&1 \
+      node /app/dist/index.js plugins install @openclaw/diagnostics-otel@2026.6.35 2>&1 \
       | grep -E "^(Installed|Already|Error)" || true
   fi
 
