@@ -1114,13 +1114,25 @@ SM_EOF
     2>/dev/null && echo -e "  ${GREEN}✓${RESET} $NS: SOUL.md pre-filled" \
     || echo -e "  ${YELLOW}⚠${RESET} $NS: SOUL.md write failed"
 
+  # Patch BOTH copies. The system prompt injects the per-agent
+  # workspace/main/AGENTS.md — patching only workspace/AGENTS.md (as this did)
+  # means the append never reaches the running agent. The shared copy still
+  # matters so agents created later inherit it.
+  # Guard per '## ' section rather than on one sentinel, or a new section added
+  # to the template never lands on a namespace patched by an earlier version.
   oc exec "$POD" -n "$NS" -c gateway -- node -e "
     const fs = require('fs');
-    const f = '/home/node/.openclaw/workspace/AGENTS.md';
-    let content = fs.readFileSync(f, 'utf8');
-    if (!content.includes('Enterprise assistant')) {
-      content += ${AGENTS_APPEND_JSON};
-      fs.writeFileSync(f, content);
+    const sections = ${AGENTS_APPEND_JSON}.split(/\n(?=## )/).filter(s => s.trim());
+    for (const f of ['/home/node/.openclaw/workspace/AGENTS.md',
+                     '/home/node/.openclaw/workspace/main/AGENTS.md']) {
+      let content;
+      try { content = fs.readFileSync(f, 'utf8'); } catch (e) { continue; }
+      let added = '';
+      for (const s of sections) {
+        const heading = s.split('\n')[0].trim();
+        if (!content.includes(heading)) added += '\n' + s.trimEnd() + '\n';
+      }
+      if (added) fs.writeFileSync(f, content + added);
     }
   " 2>/dev/null && echo -e "  ${GREEN}✓${RESET} $NS: AGENTS.md patched" \
     || echo -e "  ${YELLOW}⚠${RESET} $NS: AGENTS.md patch failed"
