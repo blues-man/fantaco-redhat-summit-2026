@@ -13,7 +13,8 @@
 # What it patches:
 #   1. allowedOrigins — audience route host + broker domain
 #   2. Model — google/{GEMINI_MODEL} or openai/{LLM_MODEL_NAME} from .env
-#   2b. memorySearch embeddings — openai/{LLM_EMBEDDING_MODEL} from .env
+#   2b. memorySearch — openai/{LLM_EMBEDDING_MODEL} from .env, or disabled
+#       outright when that is empty (never left unset; see the note at 2b)
 #   3. diagnostics.otel — full OTEL config block (if diagnostics-otel plugin installed)
 #   4. diagnostics-prometheus plugin — only if ServiceMonitor exists
 #   5. diagnostics-otel plugin — plugins.allow + plugins.entries
@@ -289,17 +290,29 @@ if ("${MODEL_KEY}") {
 }
 
 // 2b. Memory search embeddings
-// Without a model here memorySearch falls back to the openai provider's default
-// (text-embedding-3-small), which the MaaS key is not scoped to — every turn logs
-// "[memory] sync failed: openai embeddings failed: 401". The provider block's
+// Leaving memorySearch untouched is not an option: unset, it falls back to the
+// openai provider's default (text-embedding-3-small), which the MaaS key is not
+// scoped to — every turn logs "[memory] sync failed: openai embeddings failed:
+// 401". So pick one of two explicit states, never neither.
+//
+// With LLM_EMBEDDING_MODEL set, point memorySearch at it. The provider block's
 // baseUrl and placeholder apiKey are reused, so the call goes out through the
 // egress proxy and picks up the injected credential like any other model call.
+//
+// With it empty, disable memorySearch outright. The demo does not use vector
+// recall — its memory steps run on core files and conversation context, and a
+// full demo-flow-test scores 23/23 with memorySearch off, including the 4/4
+// notes-recall step. Turning it off is what lets a MaaS key scoped to the chat
+// model alone serve a seat, since the embedder is then never called.
+c.agents = c.agents || {};
+c.agents.defaults = c.agents.defaults || {};
 if ("${LLM_EMBEDDING_MODEL:-}") {
-  c.agents = c.agents || {};
-  c.agents.defaults = c.agents.defaults || {};
   c.agents.defaults.memorySearch = c.agents.defaults.memorySearch || {};
   c.agents.defaults.memorySearch.provider = "openai";
   c.agents.defaults.memorySearch.model = "${LLM_EMBEDDING_MODEL:-}";
+  delete c.agents.defaults.memorySearch.enabled;
+} else {
+  c.agents.defaults.memorySearch = { enabled: false };
 }
 
 // 3. diagnostics.otel
