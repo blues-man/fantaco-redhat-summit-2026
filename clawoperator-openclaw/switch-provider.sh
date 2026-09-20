@@ -236,6 +236,10 @@ case "$TARGET_PROVIDER" in
       # full agent harness. Probed: 120k-token prompts are accepted.
       # Keep in sync with post-restart-repatch.sh.
       CTX_WINDOW=131072; CTX_TOKENS=100000; MAX_TOKENS=8192
+    elif [[ "$MODEL" == qwen3-235b ]]; then
+      # Probed: 200k-token prompts are accepted — roughly double gpt-oss-120b.
+      # Keep in sync with post-restart-repatch.sh.
+      CTX_WINDOW=262144; CTX_TOKENS=200000; MAX_TOKENS=16384
     else
       CTX_WINDOW=128000; CTX_TOKENS=128000; MAX_TOKENS=16384
     fi
