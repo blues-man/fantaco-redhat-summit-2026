@@ -384,9 +384,13 @@ if [[ ${#MISSING_NS[@]} -gt 0 ]]; then
         -n "$NS" --dry-run=client -o yaml | oc apply -f -
     fi
 
-    # Create Langfuse auth secret (Basic Auth credential for proxy injection)
+    # Create Langfuse auth secret (Basic Auth credential for proxy injection).
+    # tr -d '\n' is load-bearing: a pk-lf-…:sk-lf-… pair encodes to ~108 chars and
+    # GNU base64 wraps at 76, putting a literal newline mid-header, which Langfuse
+    # answers with 401. BSD base64 does not wrap, which is why this only bites on
+    # Linux — and why `-w0` is not usable here, since BSD base64 rejects it.
     if [[ -n "${LANGFUSE_PUBLIC_KEY:-}" && -n "${LANGFUSE_SECRET_KEY:-}" ]]; then
-      LANGFUSE_BASIC_AUTH=$(echo -n "${LANGFUSE_PUBLIC_KEY}:${LANGFUSE_SECRET_KEY}" | base64)
+      LANGFUSE_BASIC_AUTH=$(echo -n "${LANGFUSE_PUBLIC_KEY}:${LANGFUSE_SECRET_KEY}" | base64 | tr -d '\n')
       oc create secret generic langfuse-auth \
         --from-literal=basic-auth="$LANGFUSE_BASIC_AUTH" \
         -n "$NS" --dry-run=client -o yaml | oc apply -f -
@@ -748,7 +752,9 @@ RESEOF
       if [[ -f "${SCRIPT_DIR}/.state/${CLUSTER_GUID}/langfuse.env" ]]; then
         # shellcheck disable=SC1090
         source "${SCRIPT_DIR}/.state/${CLUSTER_GUID}/langfuse.env"
-        LF_AUTH="Basic $(echo -n "${INIT_PUBLIC_KEY}:${INIT_SECRET_KEY}" | base64)"
+        # tr -d '\n' is load-bearing: GNU base64 wraps at 76 columns, the newline
+        # lands mid-header, and every MCP span export is then rejected 401.
+        LF_AUTH="Basic $(echo -n "${INIT_PUBLIC_KEY}:${INIT_SECRET_KEY}" | base64 | tr -d '\n')"
         for MCP_DEP in mcp-customer mcp-product mcp-sales-order; do
           oc set env deployment/"$MCP_DEP" -n "$NS" \
             OTEL_EXPORTER_OTLP_TRACES_HEADERS="Authorization=${LF_AUTH}" \
@@ -801,7 +807,7 @@ EOF
       # 1f. Ensure Langfuse proxy credential exists (for existing namespaces that
       #     were created before we added the langfuse credential to the Claw CR)
       if [[ -n "${LANGFUSE_PUBLIC_KEY:-}" && -n "${LANGFUSE_SECRET_KEY:-}" && -n "${LANGFUSE_ROUTE:-}" ]]; then
-        LANGFUSE_BASIC_AUTH=$(echo -n "${LANGFUSE_PUBLIC_KEY}:${LANGFUSE_SECRET_KEY}" | base64)
+        LANGFUSE_BASIC_AUTH=$(echo -n "${LANGFUSE_PUBLIC_KEY}:${LANGFUSE_SECRET_KEY}" | base64 | tr -d '\n')
         oc create secret generic langfuse-auth \
           --from-literal=basic-auth="$LANGFUSE_BASIC_AUTH" \
           -n "$NS" --dry-run=client -o yaml | oc apply -f - 2>/dev/null || true
