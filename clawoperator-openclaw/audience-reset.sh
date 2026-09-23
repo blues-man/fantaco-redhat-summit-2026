@@ -487,10 +487,19 @@ fi
 AUDIENCE_CODE="${AUDIENCE_CODE:-$(head -c 4 /dev/urandom | xxd -p | head -c 5)}"
 echo -e "Audience:   ${CYAN}${AUDIENCE_CODE}${RESET}"
 
-# Save AUDIENCE_CODE so update-broker.sh can read it without --audience-code flag
+# Save AUDIENCE_CODE so update-broker.sh can read it without --audience-code flag.
+# Rewrite only that line — the file also holds STATUS_KEY, and truncating it
+# loses the credential the status board is served behind.
 mkdir -p "${SCRIPT_DIR}/.state/${CLUSTER_GUID}"
-echo "AUDIENCE_CODE=${AUDIENCE_CODE}" > "${SCRIPT_DIR}/.state/${CLUSTER_GUID}/broker.env"
-chmod 600 "${SCRIPT_DIR}/.state/${CLUSTER_GUID}/broker.env"
+BROKER_ENV="${SCRIPT_DIR}/.state/${CLUSTER_GUID}/broker.env"
+touch "$BROKER_ENV"
+chmod 600 "$BROKER_ENV"
+{
+  grep -v '^AUDIENCE_CODE=' "$BROKER_ENV" || true
+  echo "AUDIENCE_CODE=${AUDIENCE_CODE}"
+} > "${BROKER_ENV}.tmp"
+mv "${BROKER_ENV}.tmp" "$BROKER_ENV"
+chmod 600 "$BROKER_ENV"
 echo ""
 
 # ══════════════════════════════════════════════════════════════════════
@@ -665,9 +674,17 @@ RESEOF
         const path = require('path');
         const HOME = '/home/node/.openclaw';
 
+        // The agent's live tree is agents/main and workspace/main. The
+        // agents/default and bare workspace paths below are the older layout —
+        // kept because they still exist, but on their own they wipe nothing a
+        // user ever sees.
         const dirsToRemove = [
           HOME + '/agents/default/sessions',
+          HOME + '/agents/main/sessions',
           HOME + '/agents/main/agent/codex-home/tmp',
+          HOME + '/workspace/main/memory',
+          HOME + '/skill-workshop/proposals',
+          HOME + '/skill-workshop/locks',
           HOME + '/cron/runs',
           HOME + '/.cache',
           HOME + '/.local',
@@ -690,6 +707,12 @@ RESEOF
           HOME + '/workspace/HEARTBEAT.md',
           HOME + '/workspace/IDENTITY.md',
           HOME + '/workspace/SOUL.md',
+          HOME + '/workspace/main/openclaw-workspace-state.json',
+          HOME + '/workspace/main/USER.md',
+          HOME + '/workspace/main/HEARTBEAT.md',
+          HOME + '/workspace/main/IDENTITY.md',
+          HOME + '/workspace/main/SOUL.md',
+          HOME + '/skill-workshop/proposals.json',
           HOME + '/identity/device.json',
           HOME + '/openclaw.json',
           HOME + '/openclaw.json.last-good',
@@ -717,16 +740,20 @@ RESEOF
           }
         } catch (e) {}
 
-        const skillsDir = HOME + '/workspace/skills';
-        try {
-          const entries = fs.readdirSync(skillsDir);
-          for (const e of entries) {
-            if (e !== 'platform') {
-              execSync('rm -rf ' + JSON.stringify(path.join(skillsDir, e)), { stdio: 'pipe' });
-              removed++;
+        // workspace/skills holds the injected enterprise skills; the agent
+        // writes the ones an attendee authors to workspace/main/skills. Both
+        // have to go, or the next attendee inherits the last one's work.
+        for (const skillsDir of [HOME + '/workspace/skills', HOME + '/workspace/main/skills']) {
+          try {
+            const entries = fs.readdirSync(skillsDir);
+            for (const e of entries) {
+              if (e !== 'platform') {
+                execSync('rm -rf ' + JSON.stringify(path.join(skillsDir, e)), { stdio: 'pipe' });
+                removed++;
+              }
             }
-          }
-        } catch (e) {}
+          } catch (e) {}
+        }
 
         try { execSync('rm -rf /tmp/openclaw', { stdio: 'pipe' }); removed++; } catch (e) {}
 
