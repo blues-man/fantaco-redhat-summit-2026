@@ -704,11 +704,19 @@ RESEOF
           HOME + '/tasks/runs.sqlite-shm',
           HOME + '/workspace/.openclaw/workspace-state.json',
           HOME + '/workspace/USER.md',
+          // The demo step 4 writes the customer notes straight into
+          // MEMORY.md, so leaving it behind pre-answers step 5 — the agent
+          // recalls notes it never wrote this run. The dirsToRemove entry
+          // workspace/main/memory does not cover this: that path is a
+          // directory and does not exist; the content is this file.
+          // OpenClaw rescaffolds it on next start, same as USER.md.
+          HOME + '/workspace/MEMORY.md',
           HOME + '/workspace/HEARTBEAT.md',
           HOME + '/workspace/IDENTITY.md',
           HOME + '/workspace/SOUL.md',
           HOME + '/workspace/main/openclaw-workspace-state.json',
           HOME + '/workspace/main/USER.md',
+          HOME + '/workspace/main/MEMORY.md',
           HOME + '/workspace/main/HEARTBEAT.md',
           HOME + '/workspace/main/IDENTITY.md',
           HOME + '/workspace/main/SOUL.md',
