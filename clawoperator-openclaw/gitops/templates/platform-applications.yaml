@@ -95,12 +95,19 @@ spec:
       # The DSC is applied in the same Application as the Subscription that
       # creates its CRD. Retry until the CRD exists rather than failing.
       - SkipDryRunOnMissingResource=true
+    # Short retries ON PURPOSE. A failed Argo sync pins itself to the
+    # revision it started on, so while it keeps retrying it will not
+    # pick up a fix you have already pushed -- the Application shows
+    # the new value in .spec and goes on applying the old manifests,
+    # and the only way out is to terminate the operation by hand. That
+    # cost several confusing cycles on sv68v. Failing fast means the
+    # next poll starts a fresh sync at current HEAD.
     retry:
-      limit: 20
+      limit: 3
       backoff:
-        duration: 15s
+        duration: 20s
         factor: 2
-        maxDuration: 5m
+        maxDuration: 2m
 {{- end }}
 
 {{- if .Values.components.odfMcg.enabled }}
@@ -137,12 +144,19 @@ spec:
     syncOptions:
       - CreateNamespace=true
       - SkipDryRunOnMissingResource=true
+    # Short retries ON PURPOSE. A failed Argo sync pins itself to the
+    # revision it started on, so while it keeps retrying it will not
+    # pick up a fix you have already pushed -- the Application shows
+    # the new value in .spec and goes on applying the old manifests,
+    # and the only way out is to terminate the operation by hand. That
+    # cost several confusing cycles on sv68v. Failing fast means the
+    # next poll starts a fresh sync at current HEAD.
     retry:
-      limit: 20
+      limit: 3
       backoff:
-        duration: 15s
+        duration: 20s
         factor: 2
-        maxDuration: 5m
+        maxDuration: 2m
 {{- end }}
 
 {{- if .Values.components.clawOperator.enabled }}
@@ -295,12 +309,19 @@ spec:
     syncOptions:
       - CreateNamespace=true
       - SkipDryRunOnMissingResource=true
+    # Short retries ON PURPOSE. A failed Argo sync pins itself to the
+    # revision it started on, so while it keeps retrying it will not
+    # pick up a fix you have already pushed -- the Application shows
+    # the new value in .spec and goes on applying the old manifests,
+    # and the only way out is to terminate the operation by hand. That
+    # cost several confusing cycles on sv68v. Failing fast means the
+    # next poll starts a fresh sync at current HEAD.
     retry:
-      limit: 30
+      limit: 3
       backoff:
         duration: 20s
         factor: 2
-        maxDuration: 10m
+        maxDuration: 2m
 {{- end }}
 
 {{- if .Values.components.observability.enabled }}
@@ -341,12 +362,19 @@ spec:
     syncOptions:
       - CreateNamespace=true
       - SkipDryRunOnMissingResource=true
+    # Short retries ON PURPOSE. A failed Argo sync pins itself to the
+    # revision it started on, so while it keeps retrying it will not
+    # pick up a fix you have already pushed -- the Application shows
+    # the new value in .spec and goes on applying the old manifests,
+    # and the only way out is to terminate the operation by hand. That
+    # cost several confusing cycles on sv68v. Failing fast means the
+    # next poll starts a fresh sync at current HEAD.
     retry:
-      limit: 20
+      limit: 3
       backoff:
-        duration: 15s
+        duration: 20s
         factor: 2
-        maxDuration: 5m
+        maxDuration: 2m
 {{- end }}
 
 {{- if .Values.components.observability.mlflowStandalone }}
