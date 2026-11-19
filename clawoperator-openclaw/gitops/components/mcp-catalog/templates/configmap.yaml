@@ -44,6 +44,17 @@ metadata:
   namespace: {{ .Values.mcpCatalog.dashboardNamespace }}
   labels:
     demo.redhat.com/application: "openclaw-on-openshift"
+  annotations:
+    # Makes hook changes actually fire.
+    #
+    # A PostSync hook only runs when a sync happens, and hook resources
+    # are not part of the diff -- so adding or editing
+    # dashboard-flags-job.yaml alone leaves the Application Synced and
+    # the hook never runs. On sv68v the flags stayed false with the
+    # Application green at the right revision, and the only way to run
+    # it was triggering a sync by hand. Hashing the hook's inputs into
+    # a real resource gives Argo something to notice.
+    openclaw.dev/hook-config: {{ printf "%v|%v" .Values.mcpCatalog.setDashboardFlags .Values.mcpCatalog.dashboardFlags | sha256sum | trunc 16 }}
 data:
   FantaCo-Customer: |
     {
