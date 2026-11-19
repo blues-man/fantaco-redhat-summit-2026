@@ -37,6 +37,10 @@ kind: Namespace
 metadata:
   name: {{ .Values.maas.tenantNamespace }}
   labels:
+    # Makes the namespace show up under Projects in the RHOAI
+    # dashboard. Without it the MaaS tenant is invisible there even
+    # though the model is published and Ready.
+    opendatahub.io/dashboard: "true"
     # Prerequisite 3 of 5: without this label the gateway's listener
     # refuses HTTPRoutes from this namespace, because the listener selects
     # namespaces rather than allowing all.

@@ -55,6 +55,8 @@ spec:
               namespace: "{{`{{namespace}}`}}"
               username: "{{ .Values.seats.userPrefix }}{{`{{seat}}`}}"
               userCode: "user{{`{{seat}}`}}"
+              labelAsAiProject: {{ .Values.seats.labelAsAiProject }}
+              mlflowWorkspace: {{ .Values.seats.mlflowWorkspace }}
             cluster:
               appsDomain: {{ .Values.deployer.domain | quote }}
             deployer:

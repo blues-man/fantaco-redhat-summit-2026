@@ -11,5 +11,12 @@ mcpCatalog:
   # (components/rhoai). See templates/dashboard-flags-job.yaml.
   setDashboardFlags: true
   dashboardFlags:
+    # mcpCatalog/mcpRegistry: AI hub -> MCP servers.
     - mcpCatalog
     - mcpRegistry
+    # genAiStudio: the Gen AI studio nav itself -- Playground and AI
+    # assets. Absent from OdhDashboardConfig means false, so without it
+    # those pages do not exist in the menu no matter how healthy ogx,
+    # trustyai and the gen-ai-ui pod are. Found on sv68v 2026-11-19
+    # with everything Running and the nav empty.
+    - genAiStudio

@@ -1,0 +1,32 @@
+{{- if .Values.seat.labelAsAiProject }}
+---
+# The seat namespace, declared so it can carry labels.
+#
+# CreateNamespace=true makes the namespace but cannot label it, and the
+# RHOAI dashboard lists a namespace under Projects only when it carries
+# opendatahub.io/dashboard=true. Without this a seat is invisible in the
+# dashboard even though everything in it is running -- which is what
+# create-seat-users.sh labels for, and what was missing on sv68v.
+#
+# At fleet scale this does mean N projects in the dashboard. That is the
+# intent (each attendee sees their own), but set labelAsAiProject false
+# if you would rather keep the dashboard list short.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.seat.namespace }}
+  labels:
+    opendatahub.io/dashboard: "true"
+    demo.redhat.com/application: "openclaw-on-openshift"
+{{- if .Values.seat.mlflowWorkspace }}
+    # RHOAI MLflow is workspace-scoped and selects on this DEDICATED
+    # label rather than opendatahub.io/dashboard, so that enabling
+    # MLflow for a namespace and listing it as a project stay
+    # independent decisions. API calls also need the header
+    # X-MLflow-Workspace: <namespace>.
+    mlflow.opendatahub.io/workspace: "true"
+{{- end }}
+  annotations:
+    # Before the Claw CR and the quota.
+    argocd.argoproj.io/sync-wave: "-1"
+{{- end }}

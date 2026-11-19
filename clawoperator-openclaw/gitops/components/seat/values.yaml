@@ -4,6 +4,10 @@ seat:
   username: "agentic-user1"
   # The per-seat part of the audience hostname.
   userCode: "user1"
+  # List the seat under Projects in the RHOAI dashboard.
+  labelAsAiProject: true
+  # Let the seat use the RHOAI MLflow prompt registry.
+  mlflowWorkspace: true
 
 cluster:
   # Apps domain, for the audience Route and allowedOrigins.
