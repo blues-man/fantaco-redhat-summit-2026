@@ -215,6 +215,7 @@ spec:
           gatewayName: {{ .Values.maas.gatewayName }}
           gatewayHost: {{ include "openclaw.maasGatewayHost" . | quote }}
           gatewayClassName: {{ .Values.maas.gatewayClassName }}
+          createGatewayClass: {{ .Values.maas.createGatewayClass }}
           tlsSecretName: {{ .Values.maas.tlsSecretName | quote }}
         seats:
           count: {{ include "openclaw.seatCount" . }}

@@ -19,6 +19,8 @@ maas:
   gatewayName: "maas-default-gateway"
   gatewayHost: ""
   gatewayClassName: "openshift-default"
+  # A bare cluster has no GatewayClass. See templates/gateway.yaml.
+  createGatewayClass: true
   # Empty means "use the cluster's default ingress certificate", resolved
   # by name at render time is not possible, so set it explicitly if your
   # ingresscontroller has a custom defaultCertificate. On a stock IPI

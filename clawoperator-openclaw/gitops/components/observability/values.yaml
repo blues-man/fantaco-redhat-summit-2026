@@ -1,6 +1,6 @@
 observability:
-  lokiStackSize: "1x.demo"
-  retentionDays: 7
+  lokiStackSize: "1x.extra-small"
+  retentionDays: 3
   mlflowStandalone: true
   mlflowRhoai: true
 

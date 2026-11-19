@@ -173,6 +173,10 @@ maas:
   # clusters this is usually data-science-gateway-class rather than
   # openshift-default. Gateway API must be enabled on the cluster.
   gatewayClassName: "openshift-default"
+  # A bare OCP cluster has none, and without one the Gateway is accepted
+  # but never programmed. Set false to reuse RHOAI's
+  # data-science-gateway-class instead.
+  createGatewayClass: true
   # Model context sizing written into the Claw CR for qwen3-235b.
   contextWindow: 262144
   contextTokens: 200000
@@ -226,8 +230,9 @@ components:
   # Wave 0.
   observability:
     enabled: true
-    lokiStackSize: "1x.demo"
-    retentionDays: 7
+    # Verified value from deploy-logs-loki.sh. Not "1x.demo".
+    lokiStackSize: "1x.extra-small"
+    retentionDays: 3
     # Standalone MLflow is the OTLP trace backend for the whole demo.
     mlflowStandalone: true
     # Pinned exactly as deploy-traces-mlflow.sh pins it.
