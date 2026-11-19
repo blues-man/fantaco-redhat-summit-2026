@@ -1,0 +1,203 @@
+{{/*
+The identity provider.
+
+WHY A HOOK AND NOT A RESOURCE. `oauth/cluster` is a cluster singleton
+whose spec.identityProviders is a LIST, and RHDP's
+ocp4_workload_authentication has already put a keycloak entry in it.
+Owning the object in Helm would delete that entry on first sync and lock
+everyone out of the console. The only safe operation is read-modify-
+write, which is what ../create-seat-users.sh does and what this Job does.
+
+The htpasswd hash is also generated here rather than templated. Sprig's
+`htpasswd` function re-salts on every render, so a templated Secret
+would show as OutOfSync forever and selfHeal would rewrite it on every
+poll. Generating once, in a Job, has no drift.
+
+ROSA HCP NOTE: oauth/cluster is immutable from inside a hosted cluster —
+a ValidatingAdmissionPolicy rejects the write and tells you to modify
+the HostedCluster instead. The Job detects controlPlaneTopology=External
+and exits 0 after writing the htpasswd file into the Secret, so you can
+feed it to `rosa create idp`. It does not fail the sync, because on HCP
+there is nothing it could have done.
+*/}}
+{{- $pw := .Values.identities.sharedPassword | default (printf "%s-seats-v1" (.Values.deployer.guid | default "openclaw") | sha256sum | trunc 12) }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: seat-identities
+  namespace: openshift-config
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+---
+# Cluster-scoped: it edits oauth/cluster and labels namespaces.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: seat-identities
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+rules:
+  - apiGroups: ["config.openshift.io"]
+    resources: ["oauths"]
+    verbs: ["get", "patch", "update"]
+  - apiGroups: ["config.openshift.io"]
+    resources: ["infrastructures"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "create", "patch", "update"]
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "patch", "update", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: seat-identities
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: seat-identities
+subjects:
+  - kind: ServiceAccount
+    name: seat-identities
+    namespace: openshift-config
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: seat-identities
+  namespace: openshift-config
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    # After the password Secret and the RBAC below it.
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  backoffLimit: 3
+  template:
+    spec:
+      serviceAccountName: seat-identities
+      restartPolicy: OnFailure
+      containers:
+        - name: seat-identities
+          image: image-registry.openshift-image-registry.svc:5000/openshift/cli:latest
+          env:
+            - name: SEAT_COUNT
+              value: {{ .Values.seats.count | quote }}
+            - name: USER_PREFIX
+              value: {{ .Values.seats.userPrefix | quote }}
+            - name: NS_PREFIX
+              value: {{ .Values.seats.namespacePrefix | quote }}
+            - name: IDP_NAME
+              value: {{ .Values.identities.idpName | quote }}
+            - name: SECRET_NAME
+              value: {{ .Values.identities.secretName | quote }}
+            - name: LABEL_AI_PROJECT
+              value: {{ .Values.identities.labelAsAiProject | quote }}
+            - name: SEAT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: seat-identities-password
+                  key: password
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -euo pipefail
+
+              # HASHING. `htpasswd` is not in this image, so use whatever
+              # is. -apr1 (Apache MD5) rather than bcrypt because every
+              # htpasswd reader accepts it, including older ones; the
+              # OpenShift provider takes both. This is a workshop
+              # credential on a throwaway cluster — if that stops being
+              # true, use ../create-seat-users.sh, which does bcrypt.
+              hash_pw() {
+                if command -v openssl >/dev/null 2>&1; then
+                  openssl passwd -apr1 "$1"
+                elif command -v python3 >/dev/null 2>&1; then
+                  python3 -I -c 'import crypt,sys; print(crypt.crypt(sys.argv[1], crypt.mksalt(crypt.METHOD_MD5)))' "$1"
+                else
+                  echo "ERROR: no openssl and no python3 in this image; cannot hash." >&2
+                  exit 1
+                fi
+              }
+
+              HT=$(mktemp); trap 'rm -f "$HT"' EXIT
+              HASH=$(hash_pw "$SEAT_PASSWORD")
+              for i in $(seq 1 "$SEAT_COUNT"); do
+                printf '%s:%s\n' "${USER_PREFIX}${i}" "$HASH" >> "$HT"
+              done
+              echo "hashed $SEAT_COUNT identities"
+
+              oc create secret generic "$SECRET_NAME" \
+                --from-file=htpasswd="$HT" -n openshift-config \
+                --dry-run=client -o yaml | oc apply -f -
+
+              TOPO=$(oc get infrastructure cluster \
+                -o jsonpath='{.status.controlPlaneTopology}' 2>/dev/null || true)
+              if [[ "$TOPO" == "External" ]]; then
+                echo "controlPlaneTopology=External (hosted control plane)."
+                echo "oauth/cluster cannot be modified from inside the cluster."
+                echo "The htpasswd data is in secret/$SECRET_NAME; create the IdP"
+                echo "from the management side, e.g. rosa create idp --type=htpasswd."
+                exit 0
+              fi
+
+              # Read-modify-write, with oc alone. REPLACING the list
+              # would delete the keycloak provider RHDP put there and
+              # lock everyone out of the console, so append only.
+              EXISTING=$(oc get oauth cluster \
+                -o jsonpath="{.spec.identityProviders[?(@.name=='${IDP_NAME}')].name}" 2>/dev/null || true)
+              IDP_JSON="{\"name\":\"${IDP_NAME}\",\"mappingMethod\":\"claim\",\"type\":\"HTPasswd\",\"htpasswd\":{\"fileData\":{\"name\":\"${SECRET_NAME}\"}}}"
+
+              if [[ -n "$EXISTING" ]]; then
+                echo "identity provider '$IDP_NAME' already present; secret refreshed, nothing to patch"
+              elif oc get oauth cluster -o jsonpath='{.spec.identityProviders}' | grep -q '\['; then
+                # The list exists (RHDP's keycloak is in it): append.
+                oc patch oauth cluster --type=json \
+                  -p "[{\"op\":\"add\",\"path\":\"/spec/identityProviders/-\",\"value\":${IDP_JSON}}]"
+                echo "appended '$IDP_NAME' alongside the existing providers"
+              else
+                # No list at all: create it with just ours.
+                oc patch oauth cluster --type=json \
+                  -p "[{\"op\":\"add\",\"path\":\"/spec/identityProviders\",\"value\":[${IDP_JSON}]}]"
+                echo "created identityProviders with '$IDP_NAME'"
+              fi
+
+              if [[ "$LABEL_AI_PROJECT" == "true" ]]; then
+                for i in $(seq 1 "$SEAT_COUNT"); do
+                  oc label namespace "${NS_PREFIX}${i}" \
+                    opendatahub.io/dashboard=true --overwrite 2>/dev/null || true
+                done
+                echo "flagged seat namespaces as AI projects"
+              fi
+
+              echo "oauth-openshift redeploys now; logins work in 1-2 minutes."
+              echo "User objects appear in 'oc get users' only after first login."
+          resources:
+            requests: {cpu: 10m, memory: 64Mi}
+            limits: {cpu: 500m, memory: 256Mi}
+---
+# The password lives in a Secret rather than in the Job's env, so it is
+# not visible in `oc describe job`. It is still only as secret as the
+# cluster's etcd and anyone with namespace read — this is a workshop
+# credential, not a real one.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: seat-identities-password
+  namespace: openshift-config
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "0"
+type: Opaque
+stringData:
+  password: {{ $pw | quote }}

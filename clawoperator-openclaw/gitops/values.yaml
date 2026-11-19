@@ -106,7 +106,13 @@ seats:
   count: 1
   namespacePrefix: "agentic-user"
   # OpenShift username prefix for the claw-user RoleBinding.
-  userPrefix: "user"
+  #
+  # "agentic-user", NOT "user". QUICKSTART invokes 0-admin-setup.sh as
+  # `USER_PREFIX=agentic-user`, and create-seat-users.sh names the
+  # htpasswd identities agentic-user<N>. A prefix of "user" binds
+  # claw-user to identities that never exist, and does it silently: the
+  # RoleBindings apply cleanly and nobody can use them.
+  userPrefix: "agentic-user"
   # ResourceQuota per seat. Measured footprint is 11 pods / 0.57 CPU /
   # 2.66 GiB; these carry ~40% headroom and exist to stop one runaway seat
   # starving the rest.
@@ -263,6 +269,20 @@ components:
   # components/broker/README.md. Wave 20.
   broker:
     enabled: false
+
+  # Real OpenShift identities for every seat, via an htpasswd IdP
+  # APPENDED to the existing providers. Off by default: it edits
+  # oauth/cluster, which is cluster-wide and shared with the keycloak
+  # provider RHDP installs. Wave 16.
+  #
+  # Turn it on when you need more seats than the catalog item's user
+  # cap (50), or when you want MaaS usage attributed per seat rather
+  # than collapsed into one cluster-admin row.
+  seatIdentities:
+    enabled: false
+    # One shared password for every seat. Empty derives one from the
+    # GUID. See components/seat-identities/values.yaml before using.
+    sharedPassword: ""
 
   # The seat ApplicationSets. Wave 10.
   seats:

@@ -399,6 +399,45 @@ spec:
       selfHeal: true
 {{- end }}
 
+{{- if .Values.components.seatIdentities.enabled }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{ .Release.Name }}-seat-identities
+  namespace: {{ .Values.argocd.namespace }}
+  labels:
+    {{- include "openclaw.labels" . | nindent 4 }}
+  annotations:
+    # After the seats exist: it binds roles in their namespaces.
+    argocd.argoproj.io/sync-wave: "16"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: {{ .Values.argocd.project }}
+  source:
+    repoURL: {{ include "openclaw.repoURL" . }}
+    targetRevision: {{ include "openclaw.revision" . }}
+    path: {{ include "openclaw.basePath" . }}/components/seat-identities
+    helm:
+      valuesObject:
+        seats:
+          count: {{ include "openclaw.seatCount" . }}
+          namespacePrefix: {{ .Values.seats.namespacePrefix }}
+          userPrefix: {{ .Values.seats.userPrefix }}
+        identities:
+          sharedPassword: {{ .Values.components.seatIdentities.sharedPassword | quote }}
+        deployer:
+          guid: {{ include "openclaw.guid" . | quote }}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: openshift-config
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+{{- end }}
+
 {{- if .Values.components.broker.enabled }}
 ---
 # Plain-manifest Application: the broker manifests already exist as YAML

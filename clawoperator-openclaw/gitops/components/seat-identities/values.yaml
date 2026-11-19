@@ -1,0 +1,33 @@
+seats:
+  count: 1
+  namespacePrefix: "agentic-user"
+  userPrefix: "agentic-user"
+
+identities:
+  idpName: "seat-users"
+  secretName: "htpass-seat-users"
+
+  # ONE shared password for every seat.
+  #
+  # This trades isolation for convenience, and for a workshop where the
+  # password goes on a slide that is usually the right call. It means any
+  # attendee can log in as any other seat, so rotate it or tear the
+  # cluster down afterwards. Never for anything outliving the event.
+  #
+  # Empty derives one from the GUID — reproducible, printable, and not in
+  # git. Per-seat distinct passwords are NOT offered here: distributing 50
+  # different passwords through a GitOps chart has no good answer, and
+  # ../create-seat-users.sh already does that case properly, writing them
+  # to a gitignored CSV.
+  sharedPassword: ""
+
+  # admin on their OWN namespace. Namespace-scoped, so seats cannot see
+  # each other. This is also what makes the seat usable as an RHOAI
+  # project in the dashboard.
+  grantNamespaceAdmin: true
+
+  # Flag each seat namespace as an AI project so RHOAI lists it.
+  labelAsAiProject: true
+
+deployer:
+  guid: ""

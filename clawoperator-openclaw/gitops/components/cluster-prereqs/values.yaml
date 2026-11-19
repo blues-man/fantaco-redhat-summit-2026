@@ -1,7 +1,7 @@
 seats:
   count: 1
   namespacePrefix: agentic-user
-  userPrefix: user
+  userPrefix: agentic-user
 
 # User Workload Monitoring. Without it the per-seat ServiceMonitors are
 # never scraped and every Grafana panel is empty.

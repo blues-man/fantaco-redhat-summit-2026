@@ -69,14 +69,14 @@ spec:
       restartPolicy: OnFailure
       containers:
         - name: annotate
-          image: registry.redhat.io/openshift4/ose-cli:latest
+          image: image-registry.openshift-image-registry.svc:5000/openshift/cli:latest
           command:
             - /bin/bash
             - -c
             - |
               set -euo pipefail
               SVC=authorino-authorino-authorization
-              for i in $(seq 1 60); do
+              for i in $(seq 1 120); do
                 if oc get svc "$SVC" -n kuadrant-system >/dev/null 2>&1; then
                   oc annotate svc "$SVC" -n kuadrant-system \
                     service.beta.openshift.io/serving-cert-secret-name=authorino-server-cert \
@@ -84,7 +84,7 @@ spec:
                   echo "annotated $SVC"
                   exit 0
                 fi
-                echo "waiting for $SVC ($i/60)"
+                echo "waiting for $SVC ($i/120)"
                 sleep 10
               done
               echo "ERROR: $SVC never appeared — is the Kuadrant CR Ready?" >&2

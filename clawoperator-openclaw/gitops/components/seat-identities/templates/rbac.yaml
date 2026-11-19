@@ -1,0 +1,45 @@
+{{/*
+Per-seat RBAC and the AI-project label. Both are plain resources; only
+the identity provider itself needs a hook (see idp-job.yaml).
+
+WHY SEATS WANT REAL IDENTITIES AT ALL. The demo ran for a long time with
+none — attendees reach their claw through the audience Route and the
+broker, never `oc login`. Two things broke quietly as a result:
+
+  1. The MaaS Usage dashboard cannot break traffic down per seat. Its
+     `user` dimension records WHO MINTED THE KEY, not who called, so
+     with every key minted by cluster-admin all seats collapse into one
+     row reading user="cluster-admin".
+  2. Per-seat token quota is impossible for the same reason: one
+     identity means one MaaSSubscription means one fleet-wide budget.
+
+So this is not cosmetic, and it is also why per-seat keys alone were
+never enough.
+*/}}
+{{- $prefix := .Values.seats.userPrefix }}
+{{- range $i := until (int .Values.seats.count) }}
+{{- $n := add $i 1 }}
+{{- $ns := printf "%s%d" $.Values.seats.namespacePrefix $n }}
+{{- $user := printf "%s%d" $prefix $n }}
+{{- if $.Values.identities.grantNamespaceAdmin }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: seat-admin
+  namespace: {{ $ns }}
+  labels:
+    demo.redhat.com/application: "openclaw-on-openshift"
+  annotations:
+    # Seat namespaces are created by the seat ApplicationSet.
+    argocd.argoproj.io/sync-wave: "15"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: admin
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: User
+    name: {{ $user }}
+{{- end }}
+{{- end }}

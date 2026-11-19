@@ -1,0 +1,8 @@
+apiVersion: v2
+name: seat-identities
+description: >-
+  An htpasswd identity provider giving every seat a real OpenShift
+  identity, independent of how many users the catalog item created.
+  The declarative form of ../create-seat-users.sh.
+type: application
+version: 0.1.0
