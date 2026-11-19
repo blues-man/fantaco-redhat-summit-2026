@@ -1,0 +1,7 @@
+apiVersion: v2
+name: mcp-catalog
+description: >-
+  The ConfigMap that drives the Gen AI studio MCP catalog. Not the
+  Kuadrant MCP broker — read the comments before conflating them.
+type: application
+version: 0.1.0

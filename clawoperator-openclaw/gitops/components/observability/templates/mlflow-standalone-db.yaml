@@ -1,0 +1,129 @@
+{{- if .Values.observability.mlflowStandalone }}
+{{- $ns := .Values.observability.mlflow.namespace }}
+{{- $pw := .Values.observability.mlflow.pgPassword | default (printf "%s-mlflow-db-v1" (.Values.deployer.guid | default "openclaw")) | sha256sum | trunc 32 }}
+{{/*
+PostgreSQL for the standalone MLflow. The upstream MLflow chart does not
+ship a database, so the script created one alongside it; the server
+itself is deployed by the sibling Argo Application that points at the
+upstream chart at its pinned SHA.
+*/}}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ $ns }}
+  labels:
+    # The seats' allow-instance-to-mlflow NetworkPolicy selects this
+    # namespace by kubernetes.io/metadata.name, which the API server sets
+    # automatically — nothing to do here, but do not rename the namespace
+    # without updating components/seat/values.yaml.
+    demo.redhat.com/application: "openclaw-on-openshift"
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: mlflow-db-secret
+  namespace: {{ $ns }}
+  labels:
+    app: mlflow
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+type: Opaque
+stringData:
+  uri: "postgresql+psycopg2://{{ .Values.observability.mlflow.pgUser }}:{{ $pw }}@postgresql:5432/{{ .Values.observability.mlflow.pgDatabase }}"
+  database-user: {{ .Values.observability.mlflow.pgUser | quote }}
+  database-password: {{ $pw | quote }}
+  database-name: {{ .Values.observability.mlflow.pgDatabase | quote }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgresql
+  namespace: {{ $ns }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: {{ .Values.storage.className }}
+  resources:
+    requests:
+      storage: {{ .Values.observability.mlflow.pgStorage }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgresql
+  namespace: {{ $ns }}
+  labels:
+    app: postgresql
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: postgresql
+  template:
+    metadata:
+      labels:
+        app: postgresql
+    spec:
+      containers:
+        - name: postgresql
+          image: {{ .Values.observability.mlflow.pgImage }}
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 5432
+              name: postgresql
+          env:
+            - name: POSTGRESQL_USER
+              valueFrom:
+                secretKeyRef: {name: mlflow-db-secret, key: database-user}
+            - name: POSTGRESQL_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: mlflow-db-secret, key: database-password}
+            - name: POSTGRESQL_DATABASE
+              valueFrom:
+                secretKeyRef: {name: mlflow-db-secret, key: database-name}
+          readinessProbe:
+            exec:
+              command: ["/usr/libexec/check-container"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["/usr/libexec/check-container", "--live"]
+            initialDelaySeconds: 60
+            periodSeconds: 20
+            timeoutSeconds: 10
+          resources:
+            requests: {cpu: 100m, memory: 512Mi}
+            limits: {cpu: "1", memory: 2Gi}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/pgsql/data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: postgresql
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgresql
+  namespace: {{ $ns }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  selector:
+    app: postgresql
+  ports:
+    - name: postgresql
+      port: 5432
+      targetPort: 5432
+{{- end }}

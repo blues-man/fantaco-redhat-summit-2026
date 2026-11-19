@@ -1,0 +1,434 @@
+{{/*
+Platform Applications, in sync-wave order.
+
+The waves encode QUICKSTART Section A's ordering, and the ordering is not
+cosmetic: several of these steps fail confusingly rather than loudly when
+run early. In particular the DataScienceCluster needs the RHOAI CRDs, and
+the MaaS chain needs both the MaaS CRDs and Connectivity Link.
+*/}}
+
+{{- $wave := dict
+  "clusterPrereqs" "-30"
+  "rhoai"          "-20"
+  "odfMcg"         "-20"
+  "clawOperator"   "-15"
+  "maas"           "-10"
+  "observability"  "0"
+  "mcpCatalog"     "20"
+  "broker"         "20"
+}}
+
+{{- if .Values.components.clusterPrereqs.enabled }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{ .Release.Name }}-cluster-prereqs
+  namespace: {{ .Values.argocd.namespace }}
+  labels:
+    {{- include "openclaw.labels" . | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "{{ get $wave "clusterPrereqs" }}"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: {{ .Values.argocd.project }}
+  source:
+    repoURL: {{ include "openclaw.repoURL" . }}
+    targetRevision: {{ include "openclaw.revision" . }}
+    path: {{ include "openclaw.basePath" . }}/components/cluster-prereqs
+    helm:
+      valuesObject:
+        seats:
+          count: {{ include "openclaw.seatCount" . }}
+          namespacePrefix: {{ .Values.seats.namespacePrefix }}
+          userPrefix: {{ .Values.seats.userPrefix }}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: openshift-monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+{{- end }}
+
+{{- if .Values.components.rhoai.enabled }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{ .Release.Name }}-rhoai
+  namespace: {{ .Values.argocd.namespace }}
+  labels:
+    {{- include "openclaw.labels" . | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "{{ get $wave "rhoai" }}"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: {{ .Values.argocd.project }}
+  source:
+    repoURL: {{ include "openclaw.repoURL" . }}
+    targetRevision: {{ include "openclaw.revision" . }}
+    path: {{ include "openclaw.basePath" . }}/components/rhoai
+    helm:
+      valuesObject:
+        rhoai:
+          channel: {{ .Values.components.rhoai.channel }}
+          # Tick "RHOAI base" on the RHDP order form and the operator is
+          # already installed; installing it twice is a conflict. The
+          # DataScienceCluster is still applied either way, because the
+          # generic base does not enable aigateway, mlflowoperator,
+          # mcplifecycle, modelregistry, ogx or trustyai.
+          installOperator: {{ not .Values.bases.rhoai }}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: redhat-ods-operator
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      # The DSC is applied in the same Application as the Subscription that
+      # creates its CRD. Retry until the CRD exists rather than failing.
+      - SkipDryRunOnMissingResource=true
+    retry:
+      limit: 20
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 5m
+{{- end }}
+
+{{- if .Values.components.odfMcg.enabled }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{ .Release.Name }}-odf-mcg
+  namespace: {{ .Values.argocd.namespace }}
+  labels:
+    {{- include "openclaw.labels" . | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "{{ get $wave "odfMcg" }}"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: {{ .Values.argocd.project }}
+  source:
+    repoURL: {{ include "openclaw.repoURL" . }}
+    targetRevision: {{ include "openclaw.revision" . }}
+    path: {{ include "openclaw.basePath" . }}/components/odf-mcg
+    helm:
+      valuesObject:
+        odf:
+          channel: {{ .Values.components.odfMcg.channel }}
+          storageClass: {{ .Values.storage.className }}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: openshift-storage
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - SkipDryRunOnMissingResource=true
+    retry:
+      limit: 20
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 5m
+{{- end }}
+
+{{- if .Values.components.clawOperator.enabled }}
+---
+# claw-operator, straight from its own repository. See
+# components/claw-operator/README.md — upstream ships a Makefile rather
+# than an OLM bundle, and the pinned image needs the MCP ordering patch.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{ .Release.Name }}-claw-operator
+  namespace: {{ .Values.argocd.namespace }}
+  labels:
+    {{- include "openclaw.labels" . | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "{{ get $wave "clawOperator" }}"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: {{ .Values.argocd.project }}
+  source:
+    repoURL: {{ .Values.components.clawOperator.repoUrl }}
+    targetRevision: {{ .Values.components.clawOperator.revision }}
+    path: {{ .Values.components.clawOperator.path }}
+    kustomize:
+      images:
+        - {{ printf "%s/claw-operator:%s" .Values.images.clawOperatorRegistry .Values.images.clawOperatorTag }}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: claw-operator
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+{{- end }}
+
+{{- if and .Values.components.maas.enabled (eq (include "openclaw.maasEnabled" .) "true") }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{ .Release.Name }}-maas
+  namespace: {{ .Values.argocd.namespace }}
+  labels:
+    {{- include "openclaw.labels" . | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "{{ get $wave "maas" }}"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: {{ .Values.argocd.project }}
+  source:
+    repoURL: {{ include "openclaw.repoURL" . }}
+    targetRevision: {{ include "openclaw.revision" . }}
+    path: {{ include "openclaw.basePath" . }}/components/maas
+    helm:
+      valuesObject:
+        maas:
+          upstreamApiKey: {{ include "openclaw.maasKey" . | quote }}
+          upstreamEndpoint: {{ include "openclaw.maasUpstreamEndpoint" . }}
+          model: {{ include "openclaw.maasModel" . }}
+          tokenLimit: {{ .Values.maas.tokenLimit }}
+          tokenWindow: {{ .Values.maas.tokenWindow }}
+          tenantNamespace: {{ .Values.maas.tenantNamespace }}
+          infraNamespace: {{ .Values.maas.infraNamespace }}
+          gatewayNamespace: {{ .Values.maas.gatewayNamespace }}
+          gatewayName: {{ .Values.maas.gatewayName }}
+          gatewayHost: {{ include "openclaw.maasGatewayHost" . | quote }}
+          gatewayClassName: {{ .Values.maas.gatewayClassName }}
+          tlsSecretName: {{ .Values.maas.tlsSecretName | quote }}
+        seats:
+          count: {{ include "openclaw.seatCount" . }}
+          namespacePrefix: {{ .Values.seats.namespacePrefix }}
+        storage:
+          className: {{ .Values.storage.className }}
+        deployer:
+          guid: {{ include "openclaw.guid" . | quote }}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ .Values.maas.tenantNamespace }}
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - SkipDryRunOnMissingResource=true
+    retry:
+      limit: 30
+      backoff:
+        duration: 20s
+        factor: 2
+        maxDuration: 10m
+{{- end }}
+
+{{- if .Values.components.observability.enabled }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{ .Release.Name }}-observability
+  namespace: {{ .Values.argocd.namespace }}
+  labels:
+    {{- include "openclaw.labels" . | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "{{ get $wave "observability" }}"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: {{ .Values.argocd.project }}
+  source:
+    repoURL: {{ include "openclaw.repoURL" . }}
+    targetRevision: {{ include "openclaw.revision" . }}
+    path: {{ include "openclaw.basePath" . }}/components/observability
+    helm:
+      valuesObject:
+        observability:
+          lokiStackSize: {{ .Values.components.observability.lokiStackSize }}
+          retentionDays: {{ .Values.components.observability.retentionDays }}
+          mlflowStandalone: {{ .Values.components.observability.mlflowStandalone }}
+          mlflowRhoai: {{ .Values.components.observability.mlflowRhoai }}
+        storage:
+          className: {{ .Values.storage.className }}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: openshift-logging
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - SkipDryRunOnMissingResource=true
+    retry:
+      limit: 20
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 5m
+{{- end }}
+
+{{- if .Values.components.observability.mlflowStandalone }}
+---
+# The standalone MLflow server itself, from upstream at a pinned commit.
+#
+# Not re-expressed as a local chart on purpose: deploy-traces-mlflow.sh
+# pulls charts/mlflow out of the mlflow repo at SHA
+# 336e57fc3f17183911b28deb51a18eb1a5316346 (chart 0.1.0, appVersion
+# 3.12.0), and an Argo Application pointing at the same commit is the
+# same artefact with the pin made visible. Its PostgreSQL comes from the
+# observability chart, which is why that one syncs first.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{ .Release.Name }}-mlflow
+  namespace: {{ .Values.argocd.namespace }}
+  labels:
+    {{- include "openclaw.labels" . | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: {{ .Values.argocd.project }}
+  source:
+    repoURL: {{ .Values.components.observability.mlflowChartRepo }}
+    targetRevision: {{ .Values.components.observability.mlflowChartRevision }}
+    path: charts/mlflow
+    helm:
+      valuesObject:
+        image:
+          repository: ghcr.io/mlflow/mlflow
+          tag: {{ printf "v%s-full" .Values.components.observability.mlflowVersion | quote }}
+        replicaCount: 1
+        server:
+          value_options:
+            host: "0.0.0.0"
+            port: 5000
+            workers: 2
+            allowed_hosts: "*"
+        mlflow:
+          backendStoreUriFrom:
+            secretKeyRef:
+              name: mlflow-db-secret
+              key: uri
+          defaultArtifactRoot: "/mlflow/artifacts"
+        storage:
+          enabled: true
+          size: 5Gi
+          accessMode: ReadWriteOnce
+          storageClassName: ""
+        # OpenShift's restricted SCC assigns the UID; pinning runAsUser
+        # or fsGroup here makes the pod unschedulable under it.
+        podSecurityContext:
+          runAsNonRoot: true
+          runAsUser: null
+          fsGroup: null
+          seccompProfile:
+            type: RuntimeDefault
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: ["ALL"]
+        service:
+          type: ClusterIP
+        ingress:
+          enabled: false
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: mlflow
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+{{- end }}
+
+{{- if .Values.components.mcpCatalog.enabled }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{ .Release.Name }}-mcp-catalog
+  namespace: {{ .Values.argocd.namespace }}
+  labels:
+    {{- include "openclaw.labels" . | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "{{ get $wave "mcpCatalog" }}"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: {{ .Values.argocd.project }}
+  source:
+    repoURL: {{ include "openclaw.repoURL" . }}
+    targetRevision: {{ include "openclaw.revision" . }}
+    path: {{ include "openclaw.basePath" . }}/components/mcp-catalog
+    helm:
+      valuesObject:
+        mcpCatalog:
+          dashboardNamespace: {{ .Values.components.mcpCatalog.dashboardNamespace }}
+          exemplarNamespace: {{ printf "%s%d" .Values.seats.namespacePrefix (int .Values.components.mcpCatalog.exemplarSeat) }}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ .Values.components.mcpCatalog.dashboardNamespace }}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+{{- end }}
+
+{{- if .Values.components.broker.enabled }}
+---
+# Plain-manifest Application: the broker manifests already exist as YAML
+# under broker-pg/openshift and are not worth re-expressing as a chart.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{ .Release.Name }}-broker
+  namespace: {{ .Values.argocd.namespace }}
+  labels:
+    {{- include "openclaw.labels" . | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "{{ get $wave "broker" }}"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: {{ .Values.argocd.project }}
+  source:
+    repoURL: {{ include "openclaw.repoURL" . }}
+    targetRevision: {{ include "openclaw.revision" . }}
+    path: clawoperator-openclaw/broker-pg/openshift
+    directory:
+      recurse: false
+      include: "{cloudnativepg-operator.yaml,broker-db.yaml,broker.yaml}"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: session-broker
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: false
+    syncOptions:
+      - CreateNamespace=true
+{{- end }}

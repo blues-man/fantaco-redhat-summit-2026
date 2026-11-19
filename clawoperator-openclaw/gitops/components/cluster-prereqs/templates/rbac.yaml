@@ -1,0 +1,39 @@
+---
+# What a student may do to their own seat. Namespaced by the RoleBinding
+# below, so a student can drive their Claw CR and nothing else.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: claw-user
+  labels:
+    demo.redhat.com/application: "openclaw-on-openshift"
+rules:
+  - apiGroups: ["claw.sandbox.redhat.com"]
+    resources: ["claws", "clawdevicepairingrequests"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+{{- range $i := until (int .Values.seats.count) }}
+{{- $n := add $i 1 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: claw-user
+  namespace: {{ printf "%s%d" $.Values.seats.namespacePrefix $n }}
+  labels:
+    demo.redhat.com/application: "openclaw-on-openshift"
+  annotations:
+    # The seat namespaces are created by the seat ApplicationSet in a
+    # later wave. Without this the first sync fails on a missing
+    # namespace, exactly as 0-admin-setup.sh does when run before
+    # extend-cluster.sh.
+    argocd.argoproj.io/sync-wave: "15"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: claw-user
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: User
+    name: {{ printf "%s%d" $.Values.seats.userPrefix $n }}
+{{- end }}

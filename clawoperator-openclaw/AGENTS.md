@@ -12,6 +12,7 @@ and duplicating it here would guarantee drift:
 | [`QUICKSTART.md`](QUICKSTART.md) | the reference architecture, cluster sizing, and **Section A: the verified order of operations**. Start here. |
 | [`HANDOFF.md`](HANDOFF.md) | why each step exists — the failure mode behind it. Read before changing one. |
 | [`../AGENTS.md`](../AGENTS.md) | repo-wide conventions, and the short list of traps that have each cost real time. |
+| [`gitops/README.md`](gitops/README.md) | the declarative form of Section A, and the four things that deliberately stay scripted. **Not yet synced on a cluster — scripts carry Vienna.** |
 
 ## Before you run anything
 

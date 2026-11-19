@@ -1,0 +1,24 @@
+{{- if .Values.userInfo.enabled }}
+---
+# RHDP field-content integration. AgnosticD reads any ConfigMap carrying
+# the demo.redhat.com/userinfo label and surfaces its data to the user in
+# the order details.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openclaw-userinfo
+  namespace: {{ .Values.argocd.namespace }}
+  labels:
+    demo.redhat.com/application: "openclaw-on-openshift"
+    demo.redhat.com/userinfo: ""
+data:
+  demo_title: {{ .Values.userInfo.title | quote }}
+  access_instructions: {{ .Values.userInfo.instructions | quote }}
+  deployment_type: "helm"
+  seat_count: {{ include "openclaw.seatCount" . | quote }}
+  seat_namespace_prefix: {{ .Values.seats.namespacePrefix | quote }}
+  model: {{ include "openclaw.maasModel" . | quote }}
+  maas_gateway: {{ include "openclaw.maasGatewayHost" . | quote }}
+  cluster_domain: {{ .Values.deployer.domain | quote }}
+  guid: {{ include "openclaw.guid" . | quote }}
+{{- end }}

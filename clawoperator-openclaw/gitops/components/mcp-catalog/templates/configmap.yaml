@@ -1,0 +1,62 @@
+{{/*
+THERE ARE TWO SEPARATE MCP MECHANISMS. DO NOT CONFLATE THEM.
+
+1. Gen AI studio -> MCP catalog (what you see in the dashboard).
+   Driven ENTIRELY by this ConfigMap. It does NOT read
+   MCPServerRegistration CRs. Until the ConfigMap exists the gen-ai BFF
+   logs `failed to get ConfigMap "gen-ai-aa-mcp-servers"` and the catalog
+   stays empty no matter how many registrations are Ready. That is the
+   trap: you can build the entire Kuadrant chain, see 3/3 Ready and 23
+   tools, and still have an empty catalog.
+
+2. Kuadrant MCP gateway / broker (MCPGatewayExtension +
+   MCPServerRegistration). A real broker that fronts servers behind one
+   endpoint and aggregates their tools — but it does NOT feed the
+   dashboard catalog. This chart does (1) only, which is what the
+   dashboard view needs. For (2), ../deploy-mcp-catalog.sh still owns it;
+   see the README for why it is not here.
+
+PLATFORM-LEVEL, NOT PER-NAMESPACE. One list cluster-wide, served from
+/gen-ai/api/v1/aaa/mcps?namespace=<anything> regardless of the selected
+project. Per-namespace copies are NEVER read — a cluster already had one
+in a seat namespace that had never done anything. Because it is
+platform-level, in-cluster URLs must be FULLY QUALIFIED
+(svc.cluster.local), not bare service names.
+
+Also required for the nav item to appear at all: modelregistry must be
+Managed in the DSC. The dashboard gates "AI hub -> MCP servers" on
+requiredComponents: [MODEL_REGISTRY] on top of the mcpCatalog feature
+flag. components/rhoai handles that.
+
+Schema per key: a case-sensitive unique name; the value is JSON with
+"url" and "description". The BFF fills in transport and probes status.
+
+A plain GET on /mcp returns 406 — the FantaCo servers speak streamable
+HTTP and want the MCP Accept header. 406 means the server is UP. `/`,
+`/sse` and `/messages` all 404; do not read that as broken.
+*/}}
+{{- $ns := .Values.mcpCatalog.exemplarNamespace }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gen-ai-aa-mcp-servers
+  namespace: {{ .Values.mcpCatalog.dashboardNamespace }}
+  labels:
+    demo.redhat.com/application: "openclaw-on-openshift"
+data:
+  FantaCo-Customer: |
+    {
+      "url": "http://mcp-customer-service.{{ $ns }}.svc.cluster.local:9001/mcp",
+      "description": "FantaCo customer records: lookup, 360-degree profile and account history."
+    }
+  FantaCo-Product: |
+    {
+      "url": "http://mcp-product-service.{{ $ns }}.svc.cluster.local:9003/mcp",
+      "description": "FantaCo product catalogue: search, pricing and stock levels."
+    }
+  FantaCo-Sales-Order: |
+    {
+      "url": "http://mcp-sales-order-service.{{ $ns }}.svc.cluster.local:9004/mcp",
+      "description": "FantaCo sales orders: create, look up and track orders."
+    }

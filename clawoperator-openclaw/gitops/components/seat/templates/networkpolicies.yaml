@@ -1,0 +1,91 @@
+{{- if .Values.observability.networkPolicies }}
+{{/*
+The zero-trust boundary the demo shows off. Agents reach only what is
+explicitly allowed; blocked attempts land in Loki, which is what
+review-blocked-requests.sh reads and what makes the allowlist demo work.
+*/}}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-proxy-to-mcp
+  namespace: {{ .Values.seat.namespace }}
+  labels:
+    app: fantaco-mcp
+    demo.redhat.com/application: "openclaw-on-openshift"
+spec:
+  podSelector:
+    matchLabels:
+      app: claw-proxy
+      claw.sandbox.redhat.com/instance: instance
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: mcp-customer
+      ports:
+        - port: 9001
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              app: mcp-product
+      ports:
+        - port: 9003
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              app: mcp-sales-order
+      ports:
+        - port: 9004
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-instance-to-mlflow
+  namespace: {{ .Values.seat.namespace }}
+  labels:
+    demo.redhat.com/application: "openclaw-on-openshift"
+spec:
+  podSelector:
+    matchLabels:
+      app: claw
+      claw.sandbox.redhat.com/instance: instance
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.observability.mlflowNamespace }}
+      ports:
+        - port: {{ .Values.observability.mlflowPort }}
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-prometheus-scrape
+  namespace: {{ .Values.seat.namespace }}
+  labels:
+    demo.redhat.com/application: "openclaw-on-openshift"
+spec:
+  podSelector:
+    matchLabels:
+      app: claw
+      claw.sandbox.redhat.com/instance: instance
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              network.openshift.io/policy-group: monitoring
+      ports:
+        - port: 18789
+          protocol: TCP
+{{- end }}

@@ -1,0 +1,30 @@
+odf:
+  channel: "stable-4.22"
+  namespace: "openshift-storage"
+  storageClass: "gp3-csi"
+
+  # The s3 Service defaults to type: LoadBalancer and provisions a public
+  # AWS ELB. Loki is an in-cluster consumer, so ClusterIP is correct and
+  # cheaper. Set false only if something outside the cluster needs S3.
+  disableLoadBalancerService: true
+
+  backingStore:
+    name: "pv-backingstore"
+    numVolumes: 1
+    # pv-pool agent pods default to requests=limits=400Mi and get
+    # OOMKilled. Keep the request low (it competes with seat workload for
+    # scheduling) and the limit high (it is what prevents the kill). The
+    # override lives under pvPool.resources and, despite the CRD wording
+    # ("VolumeResources ... each volume"), applies to the AGENT CONTAINER.
+    # Re-state storage in the same block or the PVC request is lost.
+    storage: "50Gi"
+    memoryRequest: "512Mi"
+    memoryLimit: "4Gi"
+    cpuRequest: "100m"
+    cpuLimit: "500m"
+
+  # This chart does not use noobaa-default-bucket-class. It creates its
+  # own BucketClass and StorageClass over the pv-pool store, and the
+  # ObjectBucketClaim in components/observability asks for that class.
+  bucketClassName: "openclaw-pv-bucketclass"
+  obcStorageClassName: "openclaw-mcg-pv"

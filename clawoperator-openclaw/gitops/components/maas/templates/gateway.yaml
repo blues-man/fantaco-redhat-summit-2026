@@ -1,0 +1,74 @@
+{{/*
+Prerequisite 1 of 5: the Gateway.
+
+The RHOAI docs reference this gateway (§1.3) but nothing creates it, and
+nothing tells you it is missing — the MaaS components simply never serve.
+*/}}
+{{- $gwLabel := printf "maas.opendatahub.io/gateway-access-%s" .Values.maas.tenantNamespace }}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.maas.tenantNamespace }}
+  labels:
+    # Prerequisite 3 of 5: without this label the gateway's listener
+    # refuses HTTPRoutes from this namespace, because the listener selects
+    # namespaces rather than allowing all.
+    {{ $gwLabel }}: "true"
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.maas.infraNamespace }}
+  labels:
+    {{ $gwLabel }}: "true"
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: {{ .Values.maas.gatewayName }}
+  namespace: {{ .Values.maas.gatewayNamespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+    # Stops the ODH Model Controller overriding MaaS-managed auth policies.
+    opendatahub.io/managed: "false"
+    # Enables TLS between the Gateway and Authorino.
+    security.opendatahub.io/authorino-tls-bootstrap: "true"
+  labels:
+    demo.redhat.com/application: "openclaw-on-openshift"
+spec:
+  gatewayClassName: {{ .Values.maas.gatewayClassName }}
+  listeners:
+    - name: https
+      hostname: {{ .Values.maas.gatewayHost | quote }}
+      port: 443
+      protocol: HTTPS
+      allowedRoutes:
+        namespaces:
+          from: Selector
+          selector:
+            matchLabels:
+              {{ $gwLabel }}: "true"
+{{- if .Values.maas.tlsSecretName }}
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: {{ .Values.maas.tlsSecretName }}
+{{- else }}
+      # No tlsSecretName given. The listener needs one, so this renders a
+      # service-ca minted cert name; annotate the gateway's Service to
+      # have it issued, or set maas.tlsSecretName to the cluster's
+      # ingress wildcard secret (preferred — a service-ca cert's subject
+      # is the internal Service name and every external client fails
+      # verification without -k).
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: {{ printf "%s-service-tls" .Values.maas.gatewayName }}
+{{- end }}

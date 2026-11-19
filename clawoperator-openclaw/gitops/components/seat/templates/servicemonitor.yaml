@@ -1,0 +1,41 @@
+{{- if .Values.observability.serviceMonitor }}
+---
+# Gateway metrics.
+#
+# THE CREDENTIAL REFERENCE IS THE WHOLE POINT OF THIS FILE. The stale
+# enable-prometheus.sh writes `credentials: {name: claw-password}`, a
+# Secret that no longer exists. The Prometheus Operator then REJECTS the
+# entire ServiceMonitor — the namespace never becomes a target at all, and
+# the only trace is a `skipping object` / InvalidConfiguration warning in
+# the prometheus-operator log in openshift-user-workload-monitoring. On
+# one cluster that silently produced 64 rejected ServiceMonitors.
+#
+# Triage by symptom:
+#   no target at all        -> rejected ServiceMonitor (this)
+#   target present, up=0    -> the gateway booted without the
+#                              diagnostics-prometheus plugin
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: openclaw-gateway
+  namespace: {{ .Values.seat.namespace }}
+  labels:
+    demo.redhat.com/application: "openclaw-on-openshift"
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  endpoints:
+    - interval: 30s
+      port: gateway
+      path: /api/diagnostics/prometheus
+      authorization:
+        type: Bearer
+        credentials:
+          name: instance-gateway-token
+          key: token
+  selector:
+    matchLabels:
+      app: claw
+      claw.sandbox.redhat.com/instance: instance
+{{- end }}

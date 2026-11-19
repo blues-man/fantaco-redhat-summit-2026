@@ -1,0 +1,104 @@
+{{/*
+The seat.
+
+WHAT BELONGS IN spec.config.raw AND WHY IT MATTERS HERE.
+
+When a pod restarts, the operator re-seeds openclaw.json from the Claw CR,
+wiping anything applied afterwards with `oc exec`. That is what
+post-restart-repatch.sh exists to undo. Anything under spec.config.raw is
+merged into operator.json BEFORE the operator's enrichment pipeline runs,
+so it is re-applied on every pod start instead of being overwritten.
+
+So everything 1-deploy-claw.sh and post-restart-repatch.sh currently poke
+into openclaw.json with `oc exec ... node -e` is expressed below as CR
+config instead. That is the single biggest win of the GitOps form: a pod
+restart stops being an event that needs repairing.
+
+The JSON paths below are the ones those scripts actually write — in
+particular the token limits live under models.providers.openai, NOT under
+agents.defaults.model, and credentials.secretRef is a LIST.
+*/}}
+{{- $modelKey := printf "openai/%s" .Values.maas.model }}
+{{- $domain := .Values.maas.apiBase | trimPrefix "https://" | trimPrefix "http://" | splitList "/" | first }}
+{{- if .Values.maas.key }}
+---
+# Only rendered when a key is passed explicitly. Normally it is not:
+# per-seat sk-oai-... keys are minted by maas-mint-seat-keys.sh --apply
+# AFTER the chain is Ready, so the secret is created out of band and this
+# chart must not fight it. Managing it here would overwrite a live key on
+# every resync.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ .Values.maas.keySecretName }}
+  namespace: {{ .Values.seat.namespace }}
+  labels:
+    demo.redhat.com/application: "openclaw-on-openshift"
+type: Opaque
+stringData:
+  api-key: {{ .Values.maas.key | quote }}
+{{- end }}
+---
+apiVersion: claw.sandbox.redhat.com/v1alpha1
+kind: Claw
+metadata:
+  name: instance
+  namespace: {{ .Values.seat.namespace }}
+  labels:
+    demo.redhat.com/application: "openclaw-on-openshift"
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  image: {{ .Values.images.openclaw | quote }}
+  # Token auth is the default — no spec.auth needed.
+  credentials:
+    - name: litellm
+      type: bearer
+      secretRef:
+        - name: {{ .Values.maas.keySecretName }}
+          key: api-key
+      domain: {{ $domain | quote }}
+  customProviders:
+    - name: openai
+      baseUrl: {{ .Values.maas.apiBase | quote }}
+      credentialRef: litellm
+      api: openai-completions
+      models:
+        - name: {{ .Values.maas.model }}
+          alias: {{ .Values.maas.model }}
+  config:
+    raw:
+      agents:
+        defaults:
+          model:
+            primary: {{ $modelKey | quote }}
+            fallbacks: []
+          models:
+            {{ $modelKey | quote }}:
+              alias: {{ .Values.maas.model }}
+          memorySearch:
+            enabled: false
+      models:
+        providers:
+          openai:
+            contextWindow: {{ .Values.maas.contextWindow }}
+            contextTokens: {{ .Values.maas.contextTokens }}
+            maxTokens: {{ .Values.maas.maxTokens }}
+            models:
+              - id: {{ .Values.maas.model }}
+                name: {{ .Values.maas.model }}
+                api: openai-completions
+                reasoning: false
+                input: ["text"]
+                contextWindow: {{ .Values.maas.contextWindow }}
+                contextTokens: {{ .Values.maas.contextTokens }}
+                maxTokens: {{ .Values.maas.maxTokens }}
+                compat:
+                  maxTokensField: max_tokens
+                  supportsStore: false
+                  supportsPromptCacheKey: false
+                  supportsReasoningEffort: false
+                  supportsDeveloperRole: false
+      logging:
+        consoleLevel: debug

@@ -1,0 +1,43 @@
+observability:
+  lokiStackSize: "1x.demo"
+  retentionDays: 7
+  mlflowStandalone: true
+  mlflowRhoai: true
+
+  loki:
+    enabled: true
+    namespace: "openshift-logging"
+    channel: "stable-6.2"
+    obcName: "loki-bucket"
+    # Must match odf.obcStorageClassName in components/odf-mcg.
+    obcStorageClass: "openclaw-mcg-pv"
+
+  mlflow:
+    # The standalone server: the OTLP trace backend for the whole demo.
+    # Deployed from the upstream chart by a sibling Argo Application (see
+    # the root chart) — only the PostgreSQL it needs lives here, because
+    # the upstream chart does not ship one.
+    namespace: "mlflow"
+    pgImage: "image-registry.openshift-image-registry.svc:5000/openshift/postgresql:15-el9"
+    pgUser: "mlflow"
+    pgDatabase: "mlflow"
+    pgStorage: "5Gi"
+    # Deterministic, see the note in components/maas/templates/database.yaml
+    # for why this is not randAlphaNum.
+    pgPassword: ""
+
+  rhoaiMlflow:
+    # Backs Gen AI studio's "Save prompt" ONLY. It has no OTLP ingest at
+    # all — /v1/traces and /otlp/v1/traces both 404 even authenticated —
+    # so it does NOT replace the standalone server above. The two coexist
+    # deliberately; do not "consolidate" them.
+    dashboardNamespace: "redhat-ods-applications"
+    dbStorage: "10Gi"
+    artifactStorage: "20Gi"
+    dbPassword: ""
+
+storage:
+  className: "gp3-csi"
+
+deployer:
+  guid: ""

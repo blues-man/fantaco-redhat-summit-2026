@@ -1,0 +1,9 @@
+apiVersion: v2
+name: seat
+description: >-
+  One OpenClaw seat: the Claw CR, its ResourceQuota, the network policies
+  that let the proxy reach the MCP servers and Prometheus reach the
+  gateway, and the ServiceMonitor. The FantaCo backends come from the
+  existing helm/fantaco-* charts, deployed by sibling Applications.
+type: application
+version: 0.1.0

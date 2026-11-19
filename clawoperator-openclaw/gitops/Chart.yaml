@@ -1,0 +1,13 @@
+apiVersion: v2
+name: openclaw-on-openshift
+description: >-
+  App-of-apps for the OpenClaw-on-OpenShift demo. Deploys the platform
+  (RHOAI, ODF/MCG, MaaS-over-MaaS, observability), N OpenClaw seats with
+  their FantaCo backends and MCP servers, the MCP catalog and the session
+  broker, as ArgoCD Applications driven from a single values file.
+type: application
+version: 0.1.0
+appVersion: "2026.6.35"
+maintainers:
+  - name: Natale Vinto
+    email: nvinto@redhat.com

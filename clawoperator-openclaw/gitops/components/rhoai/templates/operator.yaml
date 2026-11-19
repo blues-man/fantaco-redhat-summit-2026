@@ -1,0 +1,32 @@
+{{- if .Values.rhoai.installOperator }}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.rhoai.operatorNamespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+---
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: rhods-operator
+  namespace: {{ .Values.rhoai.operatorNamespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec: {}
+---
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: rhods-operator
+  namespace: {{ .Values.rhoai.operatorNamespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  name: rhods-operator
+  channel: {{ .Values.rhoai.channel }}
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+  installPlanApproval: Automatic
+{{- end }}

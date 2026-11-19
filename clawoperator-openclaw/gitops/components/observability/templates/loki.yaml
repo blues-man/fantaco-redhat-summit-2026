@@ -1,0 +1,82 @@
+{{- if .Values.observability.loki.enabled }}
+{{- $ns := .Values.observability.loki.namespace }}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ $ns }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+---
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: openshift-logging-operatorgroup
+  namespace: {{ $ns }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  targetNamespaces:
+    - {{ $ns }}
+---
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: loki-operator
+  namespace: openshift-operators-redhat
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  name: loki-operator
+  channel: {{ .Values.observability.loki.channel }}
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+  installPlanApproval: Automatic
+---
+# Object storage, in-cluster, from the BucketClass this stack owns.
+# Reaching Bound is the only honest check that MCG works — the NooBaa CR
+# reporting Ready is not evidence that a bucket can actually be claimed.
+apiVersion: objectbucket.io/v1alpha1
+kind: ObjectBucketClaim
+metadata:
+  name: {{ .Values.observability.loki.obcName }}
+  namespace: {{ $ns }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  generateBucketName: {{ .Values.observability.loki.obcName }}
+  storageClassName: {{ .Values.observability.loki.obcStorageClass }}
+---
+apiVersion: loki.grafana.com/v1
+kind: LokiStack
+metadata:
+  name: logging-loki
+  namespace: {{ $ns }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "20"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+  labels:
+    demo.redhat.com/application: "openclaw-on-openshift"
+spec:
+  size: {{ .Values.observability.lokiStackSize }}
+  storage:
+    schemas:
+      - version: v13
+        effectiveDate: "2024-10-25"
+    secret:
+      # One secret shape for both backends — the Loki Operator's s3 schema
+      # is five keys and nothing else, so an in-cluster MCG bucket is just
+      # a different endpoint and credential. Written by the Job below.
+      name: logging-loki-s3
+      type: s3
+    tls:
+      caName: openshift-service-ca.crt
+  storageClassName: {{ .Values.storage.className }}
+  tenants:
+    mode: openshift-logging
+  limits:
+    global:
+      retention:
+        days: {{ .Values.observability.retentionDays }}
+{{- end }}

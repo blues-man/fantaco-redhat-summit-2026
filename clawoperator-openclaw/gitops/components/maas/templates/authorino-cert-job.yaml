@@ -1,0 +1,99 @@
+{{- if .Values.maas.connectivityLink.enabled }}
+{{/*
+The one genuinely imperative step in this chart.
+
+Authorino's listener TLS secret is minted by the service-ca operator when
+the Service authorino-authorino-authorization carries
+  service.beta.openshift.io/serving-cert-secret-name
+That Service is created by the Authorino operator, so there is nothing for
+Helm to own. Annotating it is a mutation of someone else's object, which
+is exactly the case a hook Job is for — not a workaround for something
+that could have been a resource.
+
+Runs as a PostSync hook, is idempotent, and waits for the Service to
+appear rather than assuming it already has.
+*/}}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: authorino-cert-annotator
+  namespace: kuadrant-system
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: authorino-cert-annotator
+  namespace: kuadrant-system
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+rules:
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: authorino-cert-annotator
+  namespace: kuadrant-system
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: authorino-cert-annotator
+subjects:
+  - kind: ServiceAccount
+    name: authorino-cert-annotator
+    namespace: kuadrant-system
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: authorino-cert-annotator
+  namespace: kuadrant-system
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  backoffLimit: 4
+  template:
+    spec:
+      serviceAccountName: authorino-cert-annotator
+      restartPolicy: OnFailure
+      containers:
+        - name: annotate
+          image: registry.redhat.io/openshift4/ose-cli:latest
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -euo pipefail
+              SVC=authorino-authorino-authorization
+              for i in $(seq 1 60); do
+                if oc get svc "$SVC" -n kuadrant-system >/dev/null 2>&1; then
+                  oc annotate svc "$SVC" -n kuadrant-system \
+                    service.beta.openshift.io/serving-cert-secret-name=authorino-server-cert \
+                    --overwrite
+                  echo "annotated $SVC"
+                  exit 0
+                fi
+                echo "waiting for $SVC ($i/60)"
+                sleep 10
+              done
+              echo "ERROR: $SVC never appeared — is the Kuadrant CR Ready?" >&2
+              exit 1
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+{{- end }}

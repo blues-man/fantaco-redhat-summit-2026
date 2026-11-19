@@ -1,0 +1,40 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.odf.namespace }}
+  labels:
+    openshift.io/cluster-monitoring: "true"
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+---
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: openshift-storage-operatorgroup
+  namespace: {{ .Values.odf.namespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  targetNamespaces:
+    - {{ .Values.odf.namespace }}
+---
+# mcg-operator alone is enough: no odf-operator, no StorageSystem, no Ceph.
+# deploy-logs-loki.sh's odf path needs only the
+# objectbucketclaims.objectbucket.io CRD and the
+# openshift-storage.noobaa.io StorageClass, both of which MCG provides.
+# Standalone footprint: ~8 pods, ~9.5Gi memory requests (on 4.22 it also
+# pulls a cnpg-controller-manager for the NooBaa Postgres).
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: mcg-operator
+  namespace: {{ .Values.odf.namespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  name: mcg-operator
+  channel: {{ .Values.odf.channel }}
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+  installPlanApproval: Automatic

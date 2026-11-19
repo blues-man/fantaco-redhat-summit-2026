@@ -1,0 +1,59 @@
+maas:
+  # Injected by AgnosticV at order time. The one credential nothing in the
+  # cluster can mint for itself; without it there is no model and no seat
+  # can infer. Empty is a valid state — the chart then skips the Secret and
+  # expects you to create it out of band, which is what the scripts do.
+  upstreamApiKey: ""
+
+  # FQDN ONLY. No scheme, no path. "https://host/v1" is rejected by the
+  # CRD — the /v1 belongs in the ExternalModel path, not here.
+  upstreamEndpoint: "maas-rhdp.apps.maas.redhatworkshops.io"
+  model: "qwen3-235b-a22b"
+
+  tokenLimit: 50000000
+  tokenWindow: "1h"
+
+  tenantNamespace: "models-as-a-service"
+  infraNamespace: "redhat-ai-gateway-infra"
+  gatewayNamespace: "openshift-ingress"
+  gatewayName: "maas-default-gateway"
+  gatewayHost: ""
+  gatewayClassName: "openshift-default"
+  # Empty means "use the cluster's default ingress certificate", resolved
+  # by name at render time is not possible, so set it explicitly if your
+  # ingresscontroller has a custom defaultCertificate. On a stock IPI
+  # cluster the usual value is the self-signed router cert secret.
+  tlsSecretName: ""
+
+  # PostgreSQL for the MaaS API. "MaaS API cannot start without a
+  # database" — this is prerequisite 2 of 5.
+  database:
+    enabled: true
+    image: "registry.redhat.io/rhel9/postgresql-16"
+    storage: "10Gi"
+    user: "maas"
+    name: "maas"
+    # Generated on first install and preserved across syncs. Never
+    # rotated by a resync — see templates/database.yaml.
+    password: ""
+
+  # Red Hat Connectivity Link. RHCL *is* the supported Kuadrant: package
+  # rhcl-operator, API group kuadrant.io, activating CR kind Kuadrant.
+  # Do NOT use the community kuadrant-operator, and do NOT pre-install
+  # authorino-operator on its own — RHCL pins an exact Authorino version
+  # and a standalone subscription resolving higher makes RHCL
+  # unresolvable with ConstraintsNotSatisfiable.
+  connectivityLink:
+    enabled: true
+    channel: "stable"
+
+seats:
+  count: 1
+  namespacePrefix: "agentic-user"
+
+storage:
+  className: "gp3-csi"
+
+deployer:
+  # Seeds the deterministic PostgreSQL password. See templates/database.yaml.
+  guid: ""

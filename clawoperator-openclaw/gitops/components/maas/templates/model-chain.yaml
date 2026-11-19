@@ -1,0 +1,103 @@
+{{/*
+Prerequisite 5 of 5, and the model chain itself.
+
+  ExternalProvider  where to send traffic + how to authenticate
+  ExternalModel     the client-facing name and the request translation
+  MaaSModelRef      publishes it on the tenant's gateway
+
+THE WORST TRAP IN THE WHOLE STACK is the label on the secret below.
+Without inference.llm-d.ai/ipp-managed=true the gateway never syncs the
+credential and inference fails with
+
+    inference error: Internal - authType 'apikey' credentials not found
+
+while EVERYTHING looks healthy: ExternalProvider Ready, ExternalModel
+Ready, MaaSModelRef Ready, /v1/models lists the model, and the MaaS API
+issues keys. It surfaces only on the first real inference. The label is in
+the RHOAI docs procedure but NOT in any CRD field description, so
+`oc explain` — otherwise excellent for these CRDs — will not save you.
+
+Because the chart creates the Secret, the label is applied by
+construction. That is the main thing GitOps buys here.
+
+Still verify before minting 100 keys:
+  ../maas-mint-seat-keys.sh --smoke-test
+*/}}
+{{- if .Values.maas.upstreamApiKey }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: qwen-upstream-maas
+  namespace: {{ .Values.maas.tenantNamespace }}
+  labels:
+    # NOT OPTIONAL. See above.
+    inference.llm-d.ai/ipp-managed: "true"
+    demo.redhat.com/application: "openclaw-on-openshift"
+  annotations:
+    argocd.argoproj.io/sync-wave: "8"
+type: Opaque
+stringData:
+  # The key name MUST be literally "api-key" — the CRD requires it.
+  api-key: {{ .Values.maas.upstreamApiKey | quote }}
+{{- else }}
+{{/*
+No key supplied. Rendering an empty Secret would be worse than none: the
+chain would reach Ready and fail on first inference, which is the exact
+failure mode this file warns about. So render nothing and let the
+MaaSModelRef stay Pending, which is visible.
+*/}}
+{{- end }}
+---
+apiVersion: inference.opendatahub.io/v1alpha1
+kind: ExternalProvider
+metadata:
+  name: rhdp-maas
+  namespace: {{ .Values.maas.tenantNamespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "9"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  provider: openai
+  # FQDN only — no scheme, no path.
+  endpoint: {{ .Values.maas.upstreamEndpoint | quote }}
+  auth:
+    type: apikey
+    secretRef:
+      # Must be in the SAME namespace as this ExternalProvider.
+      name: qwen-upstream-maas
+---
+apiVersion: inference.opendatahub.io/v1alpha1
+kind: ExternalModel
+metadata:
+  name: {{ .Values.maas.model }}
+  namespace: {{ .Values.maas.tenantNamespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  modelName: {{ .Values.maas.model }}
+  externalProviderRefs:
+    - ref:
+        name: rhdp-maas
+      # "openai-chat", NOT "openai": it selects the translation to
+      # /v1/chat/completions. "messages" would be the Anthropic format.
+      apiFormat: openai-chat
+      # The /v1 lives here, not on the provider endpoint.
+      path: /v1/chat/completions
+      targetModel: {{ .Values.maas.model }}
+      weight: 1
+---
+apiVersion: maas.opendatahub.io/v1alpha1
+kind: MaaSModelRef
+metadata:
+  name: {{ .Values.maas.model }}
+  namespace: {{ .Values.maas.tenantNamespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "11"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  modelRef:
+    kind: ExternalModel
+    name: {{ .Values.maas.model }}
+  # tenantRef omitted on purpose — the model lands on the default tenant.

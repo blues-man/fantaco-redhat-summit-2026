@@ -1,0 +1,96 @@
+{{/*
+NooBaa, shaped so that the ROSA-STS failure cannot occur and the result is
+identical on a self-managed OCP-on-AWS cluster.
+
+THE FAILURE THIS AVOIDS. On a cluster whose Cloud Credential Operator runs
+in Manual mode (ROSA STS), NooBaa hangs in Configuring forever waiting for
+noobaa-aws-cloud-creds-secret, which CCO never mints — while the
+CredentialsRequest reports provisioned: true. The scripted fix is three
+`oc patch` commands, none of which is expressible as a declarative resource
+because all three mutate objects the operator owns.
+
+THE SHAPE HERE. The chart owns the NooBaa CR, so:
+  manualDefaultBackingStore: true   is a field, not a patch
+  pv-backingstore                   is a resource, not a patch
+  a dedicated BucketClass + StorageClass replace repointing the rejected
+  noobaa-default-bucket-class       so there is nothing to patch
+
+Side effect, and a welcome one: object storage stays in-cluster on PVs.
+No S3 bucket, no public ELB — which is the stated reference architecture.
+*/}}
+---
+apiVersion: noobaa.io/v1alpha1
+kind: NooBaa
+metadata:
+  name: noobaa
+  namespace: {{ .Values.odf.namespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+  labels:
+    demo.redhat.com/application: "openclaw-on-openshift"
+spec:
+  # Without this, a Manual-mode CCO cluster never leaves Configuring.
+  # With it, NooBaa is Ready in seconds and we supply the store below.
+  manualDefaultBackingStore: true
+{{- if .Values.odf.disableLoadBalancerService }}
+  disableLoadBalancerService: true
+{{- end }}
+  dbResources:
+    requests:
+      cpu: "100m"
+      memory: "500Mi"
+  coreResources:
+    requests:
+      cpu: "100m"
+      memory: "500Mi"
+---
+apiVersion: noobaa.io/v1alpha1
+kind: BackingStore
+metadata:
+  name: {{ .Values.odf.backingStore.name }}
+  namespace: {{ .Values.odf.namespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "11"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  type: pv-pool
+  pvPool:
+    numVolumes: {{ .Values.odf.backingStore.numVolumes }}
+    storageClass: {{ .Values.odf.storageClass }}
+    resources:
+      requests:
+        storage: {{ .Values.odf.backingStore.storage }}
+        memory: {{ .Values.odf.backingStore.memoryRequest }}
+        cpu: {{ .Values.odf.backingStore.cpuRequest }}
+      limits:
+        memory: {{ .Values.odf.backingStore.memoryLimit }}
+        cpu: {{ .Values.odf.backingStore.cpuLimit }}
+---
+apiVersion: noobaa.io/v1alpha1
+kind: BucketClass
+metadata:
+  name: {{ .Values.odf.bucketClassName }}
+  namespace: {{ .Values.odf.namespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "12"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  placementPolicy:
+    tiers:
+      - backingStores:
+          - {{ .Values.odf.backingStore.name }}
+---
+# Our own StorageClass over our own BucketClass. The stock
+# openshift-storage.noobaa.io class points at noobaa-default-bucket-class,
+# which on a manual-default-backing-store cluster is left Rejected.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: {{ .Values.odf.obcStorageClassName }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "13"
+provisioner: openshift-storage.noobaa.io/obc
+reclaimPolicy: Delete
+parameters:
+  bucketclass: {{ .Values.odf.bucketClassName }}

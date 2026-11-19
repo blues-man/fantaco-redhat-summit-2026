@@ -1,0 +1,168 @@
+{{- if .Values.observability.mlflowRhoai }}
+{{- $ns := .Values.observability.rhoaiMlflow.dashboardNamespace }}
+{{- $pw := .Values.observability.rhoaiMlflow.dbPassword | default (printf "%s-rhoai-mlflow-db-v1" (.Values.deployer.guid | default "openclaw")) | sha256sum | trunc 32 }}
+{{/*
+RHOAI MLflow — backs Gen AI studio's prompt registry ("Save prompt").
+
+WHY A SECOND DATABASE AND A SECOND SERVER. The standalone MLflow in the
+`mlflow` namespace is the OTLP trace backend for the whole demo and must
+not be disturbed. RHOAI MLflow is a separate concern: it has NO OTLP
+ingest at all (/v1/traces and /otlp/v1/traces both 404 even
+authenticated), so OpenClaw's diagnostics-otel still exports to the
+standalone server. They coexist deliberately.
+
+Without this CR the mlflow-ui pod logs, every 30s:
+  "MLflow CR auto-discovery failed, MLflow endpoints will return 503"
+and Save prompt fails with Service Unavailable.
+
+HARD-WON CONSTRAINTS, all verified:
+  - The CR MUST be named literally `mlflow`. It is a singleton; any other
+    name is rejected with "MLflow resource name must be 'mlflow'".
+  - Use backendStoreUriFrom, NEVER inline backendStoreUri. Setting both
+    is rejected by the API.
+  - The operator REQUIRES SSL on the backend store and the stock
+    postgresql image does not serve it, so the URI ends with
+    ?sslmode=disable. Without that the migration Job dies with
+    "server does not support SSL, but SSL was required".
+  - It is workspace-scoped. A namespace not matching
+    workspaceLabelSelector errors with "Workspace '<ns>' not found", and
+    API calls need the header X-MLflow-Workspace: <namespace>.
+
+The selector uses a DEDICATED label rather than opendatahub.io/dashboard
+so that labelling seat namespaces does not also turn all of them into
+RHOAI Data Science Projects in the dashboard.
+*/}}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: rhoai-mlflow-db
+  namespace: {{ $ns }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+type: Opaque
+stringData:
+  database-user: "mlflow"
+  database-password: {{ $pw | quote }}
+  database-name: "mlflow"
+  backend-store-uri: "postgresql://mlflow:{{ $pw }}@rhoai-mlflow-db.{{ $ns }}.svc.cluster.local:5432/mlflow?sslmode=disable"
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: rhoai-mlflow-db
+  namespace: {{ $ns }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: {{ .Values.storage.className }}
+  resources:
+    requests:
+      storage: {{ .Values.observability.rhoaiMlflow.dbStorage }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rhoai-mlflow-db
+  namespace: {{ $ns }}
+  labels:
+    app: rhoai-mlflow-db
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: rhoai-mlflow-db
+  template:
+    metadata:
+      labels:
+        app: rhoai-mlflow-db
+    spec:
+      containers:
+        - name: postgresql
+          image: image-registry.openshift-image-registry.svc:5000/openshift/postgresql:15-el9
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 5432
+              name: postgresql
+          env:
+            - name: POSTGRESQL_USER
+              valueFrom:
+                secretKeyRef: {name: rhoai-mlflow-db, key: database-user}
+            - name: POSTGRESQL_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: rhoai-mlflow-db, key: database-password}
+            - name: POSTGRESQL_DATABASE
+              valueFrom:
+                secretKeyRef: {name: rhoai-mlflow-db, key: database-name}
+          readinessProbe:
+            exec:
+              command: ["/usr/libexec/check-container"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["/usr/libexec/check-container", "--live"]
+            initialDelaySeconds: 60
+            periodSeconds: 20
+            timeoutSeconds: 10
+          resources:
+            requests: {cpu: 100m, memory: 512Mi}
+            limits: {cpu: "1", memory: 2Gi}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/pgsql/data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: rhoai-mlflow-db
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rhoai-mlflow-db
+  namespace: {{ $ns }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  selector:
+    app: rhoai-mlflow-db
+  ports:
+    - name: postgresql
+      port: 5432
+      targetPort: 5432
+---
+apiVersion: mlflow.opendatahub.io/v1
+kind: MLflow
+metadata:
+  # Singleton. Must be literally "mlflow".
+  name: mlflow
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+  labels:
+    demo.redhat.com/application: "openclaw-on-openshift"
+spec:
+  backendStoreUriFrom:
+    name: rhoai-mlflow-db
+    key: backend-store-uri
+  workspaceLabelSelector:
+    matchLabels:
+      mlflow.opendatahub.io/workspace: "true"
+  replicas: 1
+  serveArtifacts: true
+  storage:
+    accessModes: [ReadWriteOnce]
+    resources:
+      requests:
+        storage: {{ .Values.observability.rhoaiMlflow.artifactStorage }}
+    storageClassName: {{ .Values.storage.className }}
+  resources:
+    requests: {cpu: 200m, memory: 1Gi}
+    limits: {cpu: "2", memory: 4Gi}
+{{- end }}

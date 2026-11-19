@@ -1,0 +1,7 @@
+apiVersion: v2
+name: cluster-prereqs
+description: >-
+  User Workload Monitoring, the claw-user ClusterRole, and the per-seat
+  RoleBindings. The declarative half of 0-admin-setup.sh.
+type: application
+version: 0.1.0

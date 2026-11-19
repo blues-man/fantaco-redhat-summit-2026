@@ -1,0 +1,34 @@
+seat:
+  index: "1"
+  namespace: "agentic-user1"
+  username: "user1"
+
+images:
+  openclaw: "quay.io/bluesman/openclaw:2026.6.35-mlflow-preview7"
+
+maas:
+  model: "qwen3-235b-a22b"
+  apiBase: ""
+  contextWindow: 262144
+  contextTokens: 200000
+  maxTokens: 16384
+  keySecretName: "litellm-api-key"
+  # The per-seat key VALUE. Normally empty: sk-oai-... keys cannot exist
+  # until the MaaS chain is Ready, so maas-mint-seat-keys.sh --apply
+  # writes them into this secret after the fact. The chart therefore does
+  # not manage the Secret's contents — see templates/claw.yaml.
+  key: ""
+
+quota:
+  requestsCpu: "3"
+  requestsMemory: "4Gi"
+  limitsCpu: "8"
+  limitsMemory: "10Gi"
+  pods: "16"
+
+observability:
+  # The standalone MLflow that receives OTLP traces from every seat.
+  mlflowNamespace: "mlflow"
+  mlflowPort: 5000
+  serviceMonitor: true
+  networkPolicies: true

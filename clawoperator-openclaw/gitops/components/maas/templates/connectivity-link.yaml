@@ -1,0 +1,87 @@
+{{- if .Values.maas.connectivityLink.enabled }}
+{{/*
+Prerequisite 4 of 5: Red Hat Connectivity Link.
+
+MaaS needs AuthConfig (authorino.kuadrant.io/v1beta3) and
+TokenRateLimitPolicy (kuadrant.io/v1alpha1). Both come from RHCL.
+
+Naming confusion worth stating plainly: RHCL *is* the supported Kuadrant.
+Package `rhcl-operator`, API group `kuadrant.io`, activating CR
+`kind: Kuadrant`. The community `kuadrant-operator` is the wrong choice.
+
+DO NOT add an authorino-operator Subscription. RHCL pins an exact
+Authorino version (rhcl 1.4.3 -> authorino 1.4.3); a standalone
+subscription resolving to 1.4.4 makes RHCL unresolvable with
+ConstraintsNotSatisfiable, and recovery means deleting the subscription
+AND its CSV.
+
+ONE THING THIS CHART CANNOT DO. RHOAI is almost always installed before
+Connectivity Link, and its controllers cache the absence of the Kuadrant
+APIs — so MaaSAuthPolicy never leaves Ready=Unknown until odh-model-
+controller and kserve-controller-manager are restarted. A pod restart is
+not a declarative resource. If the policy is stuck, run:
+  oc delete pod -n redhat-ods-applications -l app=odh-model-controller
+  oc delete pod -n redhat-ods-applications -l control-plane=kserve-controller-manager
+*/}}
+---
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: rhcl-operator
+  namespace: openshift-operators
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  channel: {{ .Values.maas.connectivityLink.channel }}
+  name: rhcl-operator
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+  installPlanApproval: Automatic
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kuadrant-system
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+---
+# The CR that actually deploys Authorino and Limitador. Without it the
+# MaaSAuthPolicy sits at Ready=Unknown reporting "kuadrant is not
+# installed", with no other symptom.
+apiVersion: kuadrant.io/v1beta1
+kind: Kuadrant
+metadata:
+  name: kuadrant
+  namespace: kuadrant-system
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec: {}
+---
+# Authorino needs TLS on its listener. This one IS internal-only traffic,
+# so a service-ca cert is correct here (unlike the gateway listener,
+# where service-ca is the wrong choice — see gateway.yaml).
+#
+# authorino-server-cert is minted by annotating the operator-owned
+# Service authorino-authorino-authorization, which no Helm template can
+# create. templates/authorino-cert-job.yaml does it as a PostSync hook.
+apiVersion: operator.authorino.kuadrant.io/v1beta1
+kind: Authorino
+metadata:
+  name: authorino
+  namespace: kuadrant-system
+  annotations:
+    argocd.argoproj.io/sync-wave: "4"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  replicas: 1
+  clusterWide: true
+  listener:
+    tls:
+      enabled: true
+      certSecretRef:
+        name: authorino-server-cert
+  oidcServer:
+    tls:
+      enabled: false
+{{- end }}

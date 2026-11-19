@@ -1,0 +1,24 @@
+---
+# Measured per-seat footprint is 11 pods / 0.57 CPU / 2.66 GiB. These
+# numbers are far above steady state on purpose: the quota exists to stop
+# one runaway seat starving the rest, not to size the seat.
+#
+# Pods are the binding constraint at fleet scale, not CPU or memory. At
+# 100 seats the cluster sat at 71% of its pod ceiling while using 46% of
+# memory requests and 20% of CPU requests. Size the cluster on pods.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: namespace-quota
+  namespace: {{ .Values.seat.namespace }}
+  labels:
+    demo.redhat.com/application: "openclaw-on-openshift"
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  hard:
+    requests.cpu: {{ .Values.quota.requestsCpu | quote }}
+    requests.memory: {{ .Values.quota.requestsMemory | quote }}
+    limits.cpu: {{ .Values.quota.limitsCpu | quote }}
+    limits.memory: {{ .Values.quota.limitsMemory | quote }}
+    pods: {{ .Values.quota.pods | quote }}

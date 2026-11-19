@@ -1,0 +1,8 @@
+apiVersion: v2
+name: maas
+description: >-
+  MaaS over MaaS. The five prerequisites from maas-bootstrap.sh plus the
+  ExternalProvider -> ExternalModel -> MaaSModelRef chain and its
+  governance pairing, as declarative resources.
+type: application
+version: 0.1.0

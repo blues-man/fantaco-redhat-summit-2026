@@ -1,0 +1,231 @@
+{{- if .Values.components.seats.enabled }}
+{{/*
+Seats.
+
+One ApplicationSet per concern rather than one per seat: the FantaCo charts
+already exist under helm/ and are reused unchanged, so a seat is three
+Applications over two pre-existing charts plus this repo's seat chart.
+
+The seat list is generated from a single number. `seats.count: 100` is the
+whole of what `./script.sh 1 100` used to mean.
+*/}}
+{{- $seatList := list }}
+{{- range $i := until (int (include "openclaw.seatCount" .)) }}
+{{- $n := add $i 1 }}
+{{- $seatList = append $seatList (dict "seat" (toString $n) "namespace" (printf "%s%d" $.Values.seats.namespacePrefix $n)) }}
+{{- end }}
+---
+# ── The seat itself: Claw CR, quota, network policies, ServiceMonitor ──
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: {{ .Release.Name }}-seats
+  namespace: {{ .Values.argocd.namespace }}
+  labels:
+    {{- include "openclaw.labels" . | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
+spec:
+  goTemplate: false
+  generators:
+    - list:
+        elements:
+{{- range $e := $seatList }}
+          - seat: {{ $e.seat | quote }}
+            namespace: {{ $e.namespace | quote }}
+{{- end }}
+  template:
+    metadata:
+      name: "seat-{{`{{seat}}`}}"
+      namespace: {{ .Values.argocd.namespace }}
+      labels:
+        {{- include "openclaw.labels" . | nindent 8 }}
+      finalizers:
+        - resources-finalizer.argocd.argoproj.io
+    spec:
+      project: {{ .Values.argocd.project }}
+      source:
+        repoURL: {{ include "openclaw.repoURL" . }}
+        targetRevision: {{ include "openclaw.revision" . }}
+        path: {{ include "openclaw.basePath" . }}/components/seat
+        helm:
+          valuesObject:
+            seat:
+              index: "{{`{{seat}}`}}"
+              namespace: "{{`{{namespace}}`}}"
+              username: "{{ .Values.seats.userPrefix }}{{`{{seat}}`}}"
+            images:
+              openclaw: {{ .Values.images.openclaw | quote }}
+            maas:
+              model: {{ include "openclaw.maasModel" . | quote }}
+              apiBase: {{ include "openclaw.maasApiBase" . | quote }}
+              contextWindow: {{ .Values.maas.contextWindow }}
+              contextTokens: {{ .Values.maas.contextTokens }}
+              maxTokens: {{ .Values.maas.maxTokens }}
+              # Per-seat key secret. The VALUE is not here and cannot be:
+              # sk-oai-... keys only exist once the MaaS chain is Ready, so
+              # maas-mint-seat-keys.sh --apply writes them. This chart
+              # creates the secret only if absent, and never overwrites it.
+              keySecretName: "litellm-api-key"
+            quota:
+              requestsCpu: {{ .Values.seats.quota.requestsCpu | quote }}
+              requestsMemory: {{ .Values.seats.quota.requestsMemory | quote }}
+              limitsCpu: {{ .Values.seats.quota.limitsCpu | quote }}
+              limitsMemory: {{ .Values.seats.quota.limitsMemory | quote }}
+              pods: {{ .Values.seats.quota.pods | quote }}
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: "{{`{{namespace}}`}}"
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+
+{{- if .Values.components.seats.fantacoApp }}
+---
+# ── FantaCo REST backends + their PostgreSQL, from the existing chart ──
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: {{ .Release.Name }}-seats-fantaco-app
+  namespace: {{ .Values.argocd.namespace }}
+  labels:
+    {{- include "openclaw.labels" . | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "11"
+spec:
+  goTemplate: false
+  generators:
+    - list:
+        elements:
+{{- range $e := $seatList }}
+          - seat: {{ $e.seat | quote }}
+            namespace: {{ $e.namespace | quote }}
+{{- end }}
+  template:
+    metadata:
+      name: "seat-{{`{{seat}}`}}-fantaco-app"
+      namespace: {{ .Values.argocd.namespace }}
+      labels:
+        {{- include "openclaw.labels" . | nindent 8 }}
+      finalizers:
+        - resources-finalizer.argocd.argoproj.io
+    spec:
+      project: {{ .Values.argocd.project }}
+      source:
+        repoURL: {{ include "openclaw.repoURL" . }}
+        targetRevision: {{ include "openclaw.revision" . }}
+        path: {{ .Values.gitops.fantacoChartPath }}/fantaco-app
+        helm:
+          valuesObject:
+            # Only the three the demo uses. finance, hrRecruiting,
+            # hrPolicySearch and salesPolicySearch belong to a different
+            # demo on the same chart — leave them off rather than
+            # deploying 4 more pods per seat.
+            finance: {enabled: false}
+            hrRecruiting: {enabled: false}
+            hrPolicySearch: {enabled: false}
+            salesPolicySearch: {enabled: false}
+            customer:
+              enabled: true
+              image:
+                repository: {{ printf "%s/fantaco-customer-main" .Values.images.fantacoPrefix | quote }}
+                tag: {{ .Values.images.fantacoTag | quote }}
+            product:
+              enabled: true
+              image:
+                repository: {{ printf "%s/fantaco-product-main" .Values.images.fantacoPrefix | quote }}
+                tag: {{ .Values.images.fantacoTag | quote }}
+            salesorder:
+              enabled: true
+              image:
+                repository: {{ printf "%s/fantaco-sales-order-main" .Values.images.fantacoPrefix | quote }}
+                tag: {{ .Values.images.fantacoTag | quote }}
+            postgresql:
+              customer: {enabled: true}
+              product: {enabled: true}
+              salesorder: {enabled: true}
+              finance: {enabled: false}
+              hrRecruiting: {enabled: false}
+              hrPolicySearch: {enabled: false}
+              salesPolicySearch: {enabled: false}
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: "{{`{{namespace}}`}}"
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+{{- end }}
+
+{{- if .Values.components.seats.fantacoMcp }}
+---
+# ── MCP servers in front of the REST backends ──────────────────────────
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: {{ .Release.Name }}-seats-fantaco-mcp
+  namespace: {{ .Values.argocd.namespace }}
+  labels:
+    {{- include "openclaw.labels" . | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "12"
+spec:
+  goTemplate: false
+  generators:
+    - list:
+        elements:
+{{- range $e := $seatList }}
+          - seat: {{ $e.seat | quote }}
+            namespace: {{ $e.namespace | quote }}
+{{- end }}
+  template:
+    metadata:
+      name: "seat-{{`{{seat}}`}}-fantaco-mcp"
+      namespace: {{ .Values.argocd.namespace }}
+      labels:
+        {{- include "openclaw.labels" . | nindent 8 }}
+      finalizers:
+        - resources-finalizer.argocd.argoproj.io
+    spec:
+      project: {{ .Values.argocd.project }}
+      source:
+        repoURL: {{ include "openclaw.repoURL" . }}
+        targetRevision: {{ include "openclaw.revision" . }}
+        path: {{ .Values.gitops.fantacoChartPath }}/fantaco-mcp
+        helm:
+          valuesObject:
+            finance: {enabled: false}
+            hrRecruiting: {enabled: false}
+            hrPolicy: {enabled: false}
+            salesPolicySearch: {enabled: false}
+            customer:
+              enabled: true
+              image:
+                repository: {{ printf "%s/mcp-server-customer" .Values.images.mcpPrefix | quote }}
+                tag: {{ .Values.images.mcpTag | quote }}
+            product:
+              enabled: true
+              image:
+                repository: {{ printf "%s/mcp-server-product" .Values.images.mcpPrefix | quote }}
+                tag: {{ .Values.images.mcpTag | quote }}
+            salesorder:
+              enabled: true
+              image:
+                repository: {{ printf "%s/mcp-server-sales-order" .Values.images.mcpPrefix | quote }}
+                tag: {{ .Values.images.mcpTag | quote }}
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: "{{`{{namespace}}`}}"
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+{{- end }}
+{{- end }}

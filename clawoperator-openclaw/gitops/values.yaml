@@ -1,0 +1,270 @@
+# OpenClaw on OpenShift — GitOps values.
+#
+# One file. Every knob the scripts take as an environment variable or a
+# positional seat range lives here instead.
+#
+# This is the declarative half of QUICKSTART Section A. Read
+# gitops/README.md for the four things that deliberately stay imperative;
+# none of them are omissions.
+
+# ============================================================
+# Where ArgoCD reads the charts from
+# ============================================================
+#
+# When ordered through RHDP, the field-content workload OVERRIDES
+# gitops.repoURL / revision / path with what you typed in the order
+# form. Note the casing: RHDP sets repoURL, we default repoUrl, and
+# templates/_helpers.tpl coalesces them in that order. So a branch
+# ordered on demo.redhat.com is automatically the branch every child
+# Application reads from — nothing here needs editing per order.
+gitops:
+  # Standalone default, used when nothing is injected.
+  repoUrl: "https://github.com/blues-man/fantaco-redhat-summit-2026.git"
+  revision: "main"
+  # Path to this chart inside the repo.
+  basePath: "clawoperator-openclaw/gitops"
+  # RHDP injects these two; leave empty.
+  repoURL: ""
+  path: ""
+  # Path to the pre-existing FantaCo charts inside the repo. These are
+  # the same charts 4-deploy-fantaco-backends.sh renders; not copied.
+  fantacoChartPath: "helm"
+
+# ============================================================
+# Injected by RHDP — leave these alone
+# ============================================================
+#
+# The shape is fixed by roles/ocp4_workload_field_content. Overriding
+# them here only affects a standalone install.
+
+# Set by ticking "Enable LiteMaaS/MaaS API Keys" on the order form. The
+# virtual key RHDP mints IS this demo's upstream credential: it feeds
+# maas.upstreamApiKey, and litemaas.apiUrl / .model feed the rest of the
+# chain. Without it the MaaS CRs reach Ready and the first real
+# inference fails — see components/maas/templates/model-chain.yaml.
+#
+# It EXPIRES. The order form's duration dropdown (7d / 30d / …) is the
+# life of the whole demo's inference, not just of a login.
+litemaas:
+  enabled: false
+  apiUrl: ""
+  apiKey: ""
+  model: ""
+
+# Cluster GUID, injected at the TOP LEVEL by the catalog item — not
+# under deployer. Seeds deterministic database passwords.
+guid: ""
+
+# Which bases the order form installed for you.
+bases:
+  virt: false
+  # Tick "RHOAI base" on the order form and RHDP installs the operator
+  # itself. This chart then skips the Subscription but STILL applies the
+  # DataScienceCluster, because the demo needs a specific component set
+  # (aigateway + modelsAsAService, mlflowoperator, mcplifecycle,
+  # modelregistry, ogx, trustyai) that the generic base does not enable.
+  rhoai: false
+  aap: false
+
+# num_users from the order form. Used as the seat count unless
+# seats.count is set explicitly.
+user:
+  count: 0
+
+argocd:
+  namespace: openshift-gitops
+  # Standalone default. The RHDP field-content workload overrides this to
+  # "deployed" so child Applications stay out of the catalog list.
+  project: default
+
+# ============================================================
+# Injected by AgnosticV at order time — do not commit real values
+# ============================================================
+deployer:
+  # Cluster GUID. Used for the broker audience hostname and userinfo.
+  guid: ""
+  # Cluster apps domain, e.g. apps.cluster-abcde.abcde.sandbox.opentlc.com
+  domain: ""
+  apiUrl: ""
+
+# ============================================================
+# Seats
+# ============================================================
+seats:
+  # The single number that replaces every `./script.sh <start> <end>`.
+  #
+  # Leave 0 to take the order form's number of users. Set it to pin a
+  # seat count regardless of how many users were ordered.
+  count: 0
+  namespacePrefix: "agentic-user"
+  # OpenShift username prefix for the claw-user RoleBinding.
+  userPrefix: "user"
+  # ResourceQuota per seat. Measured footprint is 11 pods / 0.57 CPU /
+  # 2.66 GiB; these carry ~40% headroom and exist to stop one runaway seat
+  # starving the rest.
+  quota:
+    requestsCpu: "3"
+    requestsMemory: "4Gi"
+    limitsCpu: "8"
+    limitsMemory: "10Gi"
+    pods: "16"
+
+# ============================================================
+# Images
+# ============================================================
+images:
+  # The MLflow prompt-preview patched gateway. Not in the project org.
+  openclaw: "quay.io/bluesman/openclaw:2026.6.35-mlflow-preview7"
+
+  # DOCKER HUB IS CORRECT AND DELIBERATE. quay.io/openclawopenshift carries
+  # the same six names at the same tags, but the images are DIFFERENT
+  # CONTENT: all three quay mcp-server-* images lack httpx and crashloop
+  # with ModuleNotFoundError. That took out ~298 pods on rosa-wv5l4.
+  # See commit 4d17d95. Matching names and tags prove nothing.
+  #
+  # Above ~60 seats, mirror into the cluster registry instead of raising
+  # this: 100 namespaces pulling six images exhausts Docker Hub's anonymous
+  # limit around seat 62, and it presents as a broken demo, not a quota
+  # error. Run ../mirror-fantaco-images.sh, then set both prefixes to
+  # image-registry.openshift-image-registry.svc:5000/<mirror-namespace>.
+  fantacoPrefix: "docker.io/burrsutter"
+  mcpPrefix: "docker.io/burrsutter"
+  fantacoTag: "1.0.0"
+  mcpTag: "2.0.0"
+
+  # Pinned claw-operator. 554d988 ships OpenClaw 2026.6.35.
+  clawOperatorRegistry: "quay.io/codeready-toolchain"
+  clawOperatorTag: "554d988"
+
+# ============================================================
+# MaaS over MaaS
+# ============================================================
+maas:
+  # All three of these are normally supplied by litemaas.* above when
+  # ordered through RHDP. Set them only for a standalone install.
+  #
+  # The key: without it there is no model and no seat can infer.
+  upstreamApiKey: ""
+  # FQDN ONLY. No scheme, no path — the CRD rejects "https://host/v1".
+  # (litemaas.apiUrl is a full URL; the helper strips it for you.)
+  upstreamEndpoint: "maas-rhdp.apps.maas.redhatworkshops.io"
+  model: "qwen3-235b-a22b"
+  # Fleet-wide pool when seats share one key, per-seat once
+  # maas-mint-seat-keys.sh --apply has run. 2,000,000/1h was too low at 100
+  # seats (~20k per seat per hour); 50,000,000 is the working value.
+  tokenLimit: 50000000
+  tokenWindow: "1h"
+  tenantNamespace: "models-as-a-service"
+  infraNamespace: "redhat-ai-gateway-infra"
+  gatewayNamespace: "openshift-ingress"
+  gatewayName: "maas-default-gateway"
+  # Leave empty to let the chart derive maas.<deployer.domain>.
+  gatewayHost: ""
+  # TLS secret for the gateway listener, in gatewayNamespace.
+  #
+  # Leave empty and the chart uses the cluster's default ingress wildcard
+  # cert. On a self-managed OCP-on-AWS cluster that is usually the
+  # self-signed router cert, so external clients need -k unless you have
+  # replaced it. ROSA ships a real Let's Encrypt wildcard, which is why the
+  # scripts prefer it. Either works — the listener reaches
+  # ResolvedRefs=True with an Opaque secret, which looks wrong and is fine.
+  tlsSecretName: ""
+  # GatewayClass on controller openshift.io/gateway-controller/v1. On RHOAI
+  # clusters this is usually data-science-gateway-class rather than
+  # openshift-default. Gateway API must be enabled on the cluster.
+  gatewayClassName: "openshift-default"
+  # Model context sizing written into the Claw CR for qwen3-235b.
+  contextWindow: 262144
+  contextTokens: 200000
+  maxTokens: 16384
+
+# ============================================================
+# Storage
+# ============================================================
+storage:
+  # gp3-csi on ROSA. Changes every PVC in the stack.
+  className: "gp3-csi"
+
+# ============================================================
+# Components — each one is an ArgoCD Application
+# ============================================================
+components:
+
+  # UWM, the claw-user ClusterRole, per-seat RoleBindings. Wave -30.
+  clusterPrereqs:
+    enabled: true
+
+  # RHOAI operator + DataScienceCluster. Wave -20.
+  rhoai:
+    enabled: true
+    channel: "stable-3.x"
+
+  # ODF Multi-Cloud Gateway standalone for Loki's object storage. Wave -20.
+  odfMcg:
+    enabled: true
+    channel: "stable-4.22"
+    # There is no stsWorkaround flag and it is not an omission. The chart
+    # owns the NooBaa CR and its own BucketClass/StorageClass, so object
+    # storage is in-cluster on PVs and the Manual-mode-CCO failure cannot
+    # occur. Identical on self-managed OCP-on-AWS and on ROSA STS.
+    # See components/odf-mcg/README.md.
+
+  # claw-operator. Disabled by default: upstream ships a Makefile, not a
+  # bundle. See components/claw-operator/README.md before enabling.
+  clawOperator:
+    enabled: false
+    repoUrl: "https://github.com/codeready-toolchain/claw-operator.git"
+    revision: "main"
+    path: "config/default"
+
+  # Gateway, PostgreSQL, Connectivity Link, Kuadrant, and the
+  # ExternalProvider -> ExternalModel -> MaaSModelRef chain. Wave -10.
+  maas:
+    enabled: true
+
+  # LokiStack on an ObjectBucketClaim, standalone MLflow, RHOAI MLflow.
+  # Wave 0.
+  observability:
+    enabled: true
+    lokiStackSize: "1x.demo"
+    retentionDays: 7
+    # Standalone MLflow is the OTLP trace backend for the whole demo.
+    mlflowStandalone: true
+    # Pinned exactly as deploy-traces-mlflow.sh pins it.
+    mlflowChartRepo: "https://github.com/mlflow/mlflow.git"
+    mlflowChartRevision: "336e57fc3f17183911b28deb51a18eb1a5316346"
+    mlflowVersion: "3.12.0"
+    # RHOAI MLflow backs Gen AI studio's prompt registry only. It has NO
+    # OTLP ingest (/v1/traces 404s), so it does not replace the standalone.
+    mlflowRhoai: true
+
+  # The gen-ai-aa-mcp-servers ConfigMap. Platform-level: ONE list
+  # cluster-wide, so it registers a single seat as exemplar rather than
+  # N x 3 near-identical entries. Wave 20.
+  mcpCatalog:
+    enabled: true
+    exemplarSeat: 1
+    dashboardNamespace: "redhat-ods-applications"
+
+  # Session broker. Needs an image built in-cluster first; see
+  # components/broker/README.md. Wave 20.
+  broker:
+    enabled: false
+
+  # The seat ApplicationSets. Wave 10.
+  seats:
+    enabled: true
+    # FantaCo REST backends + their PostgreSQL.
+    fantacoApp: true
+    # MCP servers in front of them.
+    fantacoMcp: true
+
+# ============================================================
+# RHDP field-content integration
+# ============================================================
+userInfo:
+  enabled: true
+  title: "OpenClaw on OpenShift"
+  instructions: >-
+    Your agent seat is in the agentic-user<N> namespace. The Control UI
+    route is printed in the userinfo ConfigMap.

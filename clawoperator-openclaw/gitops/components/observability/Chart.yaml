@@ -1,0 +1,8 @@
+apiVersion: v2
+name: observability
+description: >-
+  LokiStack over an in-cluster ObjectBucketClaim, the standalone MLflow
+  that receives OTLP traces, and the RHOAI MLflow CR that backs Gen AI
+  studio's prompt registry. The two MLflows coexist deliberately.
+type: application
+version: 0.1.0

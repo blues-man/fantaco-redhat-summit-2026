@@ -1,0 +1,9 @@
+rhoai:
+  # stable-3.x gives rhods-operator 3.5.3 — the version the demo is
+  # validated against.
+  channel: "stable-3.x"
+  operatorNamespace: "redhat-ods-operator"
+  dscName: "default-dsc"
+  # False when the RHDP order form already installed the RHOAI base.
+  # The DataScienceCluster is applied regardless — see the root chart.
+  installOperator: true

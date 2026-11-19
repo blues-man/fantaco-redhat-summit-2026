@@ -1,0 +1,20 @@
+{{- if .Values.userWorkloadMonitoring.enabled }}
+---
+# Enable User Workload Monitoring.
+#
+# NOT managed with selfHeal in mind: this ConfigMap is shared cluster
+# state and other things legitimately write to it. The merge-friendly
+# alternative — patching only enableUserWorkload — is not expressible in
+# Helm, so if your cluster already has a populated
+# cluster-monitoring-config, reconcile it by hand and disable this.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cluster-monitoring-config
+  namespace: openshift-monitoring
+  annotations:
+    argocd.argoproj.io/sync-options: Replace=false
+data:
+  config.yaml: |
+    enableUserWorkload: true
+{{- end }}

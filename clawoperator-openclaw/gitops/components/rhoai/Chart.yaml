@@ -1,0 +1,8 @@
+apiVersion: v2
+name: rhoai
+description: >-
+  RHOAI operator and the DataScienceCluster the demo is validated against.
+  Declarative form of operator-patches/rhoai-operator-subscription.yaml and
+  rhoai-dsc-maas-mlflow.yaml.
+type: application
+version: 0.1.0

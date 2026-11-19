@@ -1,0 +1,7 @@
+apiVersion: v2
+name: odf-mcg
+description: >-
+  ODF Multi-Cloud Gateway standalone — object storage for Loki, without
+  Ceph. Optionally applies the CCO-Manual (ROSA STS) unblock.
+type: application
+version: 0.1.0

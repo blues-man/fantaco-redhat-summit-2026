@@ -1,0 +1,6 @@
+mcpCatalog:
+  dashboardNamespace: "redhat-ods-applications"
+  # Which seat's MCP servers the catalog points at. The catalog is
+  # cluster-scoped, so 100 seats x 3 servers would be 300 near-identical
+  # entries; one seat acts as the exemplar.
+  exemplarNamespace: "agentic-user1"

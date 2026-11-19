@@ -1,0 +1,53 @@
+# STANDALONE ONLY.
+#
+# If you are ordering Field Sourced Content CI from demo.redhat.com, do
+# NOT apply this — the field-content workload creates its own Argo
+# Application pointing at this chart and injects deployer/litemaas/guid
+# values that this file cannot know. See README.md.
+#
+# The one thing you apply by hand.
+#
+#   oc apply -f gitops/bootstrap/root-application.yaml
+#
+# Everything else is a consequence of this. Override values with
+# spec.source.helm.parameters below, or fork and edit gitops/values.yaml.
+#
+# BEFORE YOU APPLY:
+#   - openshift-gitops must be installed and its controller must have
+#     cluster-admin (it creates operators, CRs and namespaces).
+#   - maas.upstreamApiKey must be set, or the MaaS chain will reach Ready
+#     and fail on the first real inference. On RHDP this arrives from
+#     AgnosticV; standalone, pass it with -p below.
+#   - seats.count is the only number you need to choose.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: openclaw-on-openshift
+  namespace: openshift-gitops
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/blues-man/fantaco-redhat-summit-2026.git
+    targetRevision: main
+    path: clawoperator-openclaw/gitops
+    helm:
+      parameters:
+        - name: seats.count
+          value: "1"
+        # - name: maas.upstreamApiKey
+        #   value: "<RHDP virtual key — do not commit>"
+        # - name: deployer.guid
+        #   value: "<cluster guid>"
+        # - name: deployer.domain
+        #   value: "apps.<cluster>.<base domain>"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: openshift-gitops
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

@@ -1,0 +1,72 @@
+{{/*
+Governance pairing. A MaaSModelRef stays Pending with "No active
+subscription and auth policy pairing found" until BOTH of these exist —
+MaaS refuses to publish an endpoint nobody is authorised to call. The
+model being healthy is not enough.
+
+  MaaSAuthPolicy    WHO may call the model
+  MaaSSubscription  WHAT they get (token rate limits, billing attribution)
+
+SIZING THE RATE LIMIT — read before lowering it.
+
+With one shared key, every seat presents the same identity, so the limit
+is a FLEET-WIDE pool, not per seat. At 100 seats, 2,000,000/1h is only
+~20k tokens per seat per hour, which an agentic run exhausts quickly —
+that was the original value and it was too low. 50,000,000/1h (~500k per
+seat per hour) is the working value.
+
+There is no upstream backstop. The RHDP virtual key reports max_budget,
+tpm_limit, rpm_limit and max_parallel_requests all null — uncapped — so
+THIS limit is the only governor in the chain. Verify rather than assume:
+  curl -H "Authorization: Bearer <virtual-key>" https://<upstream>/key/info
+
+Once maas-mint-seat-keys.sh --apply has run, keys are distinct strings but
+still ONE identity, so this stays a fleet-wide pool. Genuine per-seat
+quota would need one OpenShift identity + group + subscription per seat.
+
+SCOPE. system:authenticated, because for an event every seat should just
+work and the cluster is single-purpose and torn down afterwards. Narrow
+this to the seat group on a shared or longer-lived cluster.
+*/}}
+---
+apiVersion: maas.opendatahub.io/v1alpha1
+kind: MaaSAuthPolicy
+metadata:
+  name: {{ .Values.maas.model }}-access
+  namespace: {{ .Values.maas.tenantNamespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "12"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  modelRefs:
+    - name: {{ .Values.maas.model }}
+      namespace: {{ .Values.maas.tenantNamespace }}
+  subjects:
+    groups:
+      - name: system:authenticated
+  meteringMetadata:
+    organizationId: fantaco-demo
+    costCenter: summit-2026
+---
+apiVersion: maas.opendatahub.io/v1alpha1
+kind: MaaSSubscription
+metadata:
+  name: {{ .Values.maas.model }}-demo
+  namespace: {{ .Values.maas.tenantNamespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "12"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  owner:
+    groups:
+      - name: system:authenticated
+  priority: 0
+  modelRefs:
+    - name: {{ .Values.maas.model }}
+      namespace: {{ .Values.maas.tenantNamespace }}
+      tokenRateLimits:
+        - limit: {{ .Values.maas.tokenLimit }}
+          window: {{ .Values.maas.tokenWindow }}
+  tokenMetadata:
+    organizationId: fantaco-demo
+    costCenter: summit-2026
