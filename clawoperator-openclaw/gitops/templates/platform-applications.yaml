@@ -377,10 +377,21 @@ spec:
     targetRevision: {{ .Values.components.observability.mlflowChartRevision }}
     path: charts
     helm:
-      valuesObject:
+      # A RAW VALUES STRING, NOT valuesObject, and the distinction is
+      # load-bearing. The chart defaults to podSecurityContext.runAsUser
+      # 1000 / fsGroup 1000, which restricted-v2 rejects outright:
+      #   .containers[0].runAsUser: Invalid value: 1000: must be in the
+      #   ranges: [1000840000, 1000849999]
+      # The pod is never created and the Deployment sits at
+      # ProgressDeadlineExceeded. deploy-traces-mlflow.sh nulls those two
+      # keys in a values FILE, where Helm's coalesce deletes a key whose
+      # value is null. Argo's valuesObject round-trips through JSON and
+      # drops the nulls, so the chart defaults came back and the fix
+      # silently did nothing. A raw string is passed through as -f.
+      values: |
         image:
           repository: ghcr.io/mlflow/mlflow
-          tag: {{ printf "v%s-full" .Values.components.observability.mlflowVersion | quote }}
+          tag: "v{{ .Values.components.observability.mlflowVersion }}-full"
         replicaCount: 1
         server:
           value_options:
@@ -399,8 +410,8 @@ spec:
           size: 5Gi
           accessMode: ReadWriteOnce
           storageClassName: ""
-        # OpenShift's restricted SCC assigns the UID; pinning runAsUser
-        # or fsGroup here makes the pod unschedulable under it.
+        # null, not absent: OpenShift assigns the UID from the
+        # namespace range and any pinned value is rejected.
         podSecurityContext:
           runAsNonRoot: true
           runAsUser: null

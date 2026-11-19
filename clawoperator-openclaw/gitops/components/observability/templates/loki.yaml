@@ -19,6 +19,29 @@ spec:
   targetNamespaces:
     - {{ $ns }}
 ---
+# The Loki operator installs into openshift-operators-redhat, which does
+# NOT exist on a fresh cluster. Without these two the Subscription fails
+# with `namespaces "openshift-operators-redhat" not found`, and because
+# Argo retries the whole operation, every later resource in this chart
+# stays Missing.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: openshift-operators-redhat
+  labels:
+    openshift.io/cluster-monitoring: "true"
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+---
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: openshift-operators-redhat
+  namespace: openshift-operators-redhat
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec: {}
+---
 apiVersion: operators.coreos.com/v1alpha1
 kind: Subscription
 metadata:
