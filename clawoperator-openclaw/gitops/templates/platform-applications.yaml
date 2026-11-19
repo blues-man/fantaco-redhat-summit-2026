@@ -147,13 +147,16 @@ spec:
 
 {{- if .Values.components.clawOperator.enabled }}
 ---
-# claw-operator, straight from its own repository. See
-# components/claw-operator/README.md — upstream ships a Makefile rather
-# than an OLM bundle, and the pinned image needs the MCP ordering patch.
+# claw-operator, in TWO Applications, because config/default does not
+# include the CRDs: `#- ../crd` is commented out in its kustomization,
+# and `make dev-deploy` applies them separately via `make install`.
+# Pointing Argo at config/default alone deploys a running operator and
+# no Claw CRD, so every seat fails with "resource mapping not found".
+# Verified on sv68v 2026-11-19 — that is exactly what happened.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: {{ .Release.Name }}-claw-operator
+  name: {{ .Release.Name }}-claw-operator-crds
   namespace: {{ .Values.argocd.namespace }}
   labels:
     {{- include "openclaw.labels" . | nindent 4 }}
@@ -166,10 +169,68 @@ spec:
   source:
     repoURL: {{ .Values.components.clawOperator.repoUrl }}
     targetRevision: {{ .Values.components.clawOperator.revision }}
+    path: config/crd
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: claw-operator
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      # CRDs exceed the annotation size limit for client-side apply.
+      - ServerSideApply=true
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{ .Release.Name }}-claw-operator
+  namespace: {{ .Values.argocd.namespace }}
+  labels:
+    {{- include "openclaw.labels" . | nindent 4 }}
+  annotations:
+    # After the CRDs.
+    argocd.argoproj.io/sync-wave: "{{ add (get $wave "clawOperator" | int) 1 }}"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: {{ .Values.argocd.project }}
+  source:
+    repoURL: {{ .Values.components.clawOperator.repoUrl }}
+    targetRevision: {{ .Values.components.clawOperator.revision }}
     path: {{ .Values.components.clawOperator.path }}
     kustomize:
+      # Mirrors generate-deploy-overlay in the operator's Makefile.
+      # The manifests ship placeholders -- image: controller:latest and
+      # PROXY_IMAGE: claw-proxy:latest -- which are unpullable as-is.
       images:
-        - {{ printf "%s/claw-operator:%s" .Values.images.clawOperatorRegistry .Values.images.clawOperatorTag }}
+        - {{ printf "controller=%s/claw-operator:%s" .Values.images.clawOperatorRegistry .Values.images.clawOperatorTag }}
+      patches:
+        # PROXY_IMAGE is an env var, not an image field, so the images
+        # transformer above cannot reach it. Patch it the same way
+        # `make dev-deploy` does.
+        - target:
+            kind: Deployment
+          patch: |-
+            apiVersion: apps/v1
+            kind: Deployment
+            metadata:
+              name: controller-manager
+            spec:
+              template:
+                spec:
+                  containers:
+                  - name: manager
+                    imagePullPolicy: Always
+                    env:
+                    - name: PROXY_IMAGE
+                      value: {{ printf "%s/claw-proxy:%s" .Values.images.clawOperatorRegistry .Values.images.clawOperatorTag | quote }}
+                    resources:
+                      limits:
+                        memory: 512Mi
+                      requests:
+                        memory: 128Mi
   destination:
     server: https://kubernetes.default.svc
     namespace: claw-operator
@@ -314,7 +375,7 @@ spec:
   source:
     repoURL: {{ .Values.components.observability.mlflowChartRepo }}
     targetRevision: {{ .Values.components.observability.mlflowChartRevision }}
-    path: charts/mlflow
+    path: charts
     helm:
       valuesObject:
         image:

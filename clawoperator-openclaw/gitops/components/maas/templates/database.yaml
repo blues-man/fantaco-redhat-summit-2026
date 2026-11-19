@@ -46,7 +46,7 @@ metadata:
   name: postgres
   namespace: {{ .Values.maas.infraNamespace }}
   annotations:
-    argocd.argoproj.io/sync-wave: "7"
+    argocd.argoproj.io/sync-wave: "6"
   labels:
     app: postgres
 spec:
@@ -94,7 +94,7 @@ metadata:
   name: postgres
   namespace: {{ .Values.maas.infraNamespace }}
   annotations:
-    argocd.argoproj.io/sync-wave: "7"
+    argocd.argoproj.io/sync-wave: "6"
 spec:
   selector:
     app: postgres

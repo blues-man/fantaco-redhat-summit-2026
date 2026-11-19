@@ -182,7 +182,16 @@ maas:
   # replaced it. ROSA ships a real Let's Encrypt wildcard, which is why the
   # scripts prefer it. Either works — the listener reaches
   # ResolvedRefs=True with an Opaque secret, which looks wrong and is fine.
-  tlsSecretName: ""
+  # VERIFIED on sv68v 2026-11-19. An empty value made the listener fall
+  # back to a service-ca secret name that nothing mints, and the Gateway
+  # sat at "invalid certificate reference" — which blocked every later
+  # sync wave, so the whole MaaS chain read Missing rather than broken.
+  #
+  # RHDP sandbox clusters run cert-manager and put a real wildcard for
+  # *.apps.<domain> in openshift-ingress. Find yours with:
+  #   oc get ingresscontroller default -n openshift-ingress-operator \
+  #     -o jsonpath='{.spec.defaultCertificate.name}'
+  tlsSecretName: "cert-manager-ingress-cert"
   # GatewayClass on controller openshift.io/gateway-controller/v1. On RHOAI
   # clusters this is usually data-science-gateway-class rather than
   # openshift-default. Gateway API must be enabled on the cluster.
@@ -230,7 +239,9 @@ components:
   # claw-operator. Disabled by default: upstream ships a Makefile, not a
   # bundle. See components/claw-operator/README.md before enabling.
   clawOperator:
-    enabled: false
+    # ON. Nothing optional about it: the Claw CRD comes from here, and
+    # without it every seat fails with "resource mapping not found".
+    enabled: true
     repoUrl: "https://github.com/codeready-toolchain/claw-operator.git"
     revision: "main"
     path: "config/default"

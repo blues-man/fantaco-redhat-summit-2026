@@ -59,7 +59,7 @@ metadata:
   labels:
     app: postgresql
   annotations:
-    argocd.argoproj.io/sync-wave: "2"
+    argocd.argoproj.io/sync-wave: "1"
 spec:
   replicas: 1
   strategy:
@@ -118,7 +118,7 @@ metadata:
   name: postgresql
   namespace: {{ $ns }}
   annotations:
-    argocd.argoproj.io/sync-wave: "2"
+    argocd.argoproj.io/sync-wave: "1"
 spec:
   selector:
     app: postgresql

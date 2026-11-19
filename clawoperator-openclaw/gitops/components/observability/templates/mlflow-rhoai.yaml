@@ -69,7 +69,7 @@ metadata:
   labels:
     app: rhoai-mlflow-db
   annotations:
-    argocd.argoproj.io/sync-wave: "2"
+    argocd.argoproj.io/sync-wave: "1"
 spec:
   replicas: 1
   strategy:
@@ -128,7 +128,7 @@ metadata:
   name: rhoai-mlflow-db
   namespace: {{ $ns }}
   annotations:
-    argocd.argoproj.io/sync-wave: "2"
+    argocd.argoproj.io/sync-wave: "1"
 spec:
   selector:
     app: rhoai-mlflow-db
