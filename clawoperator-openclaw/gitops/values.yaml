@@ -95,7 +95,15 @@ seats:
   #
   # Leave 0 to take the order form's number of users. Set it to pin a
   # seat count regardless of how many users were ordered.
-  count: 0
+  #
+  # PINNED TO 1 FOR THE FIRST SYNC. The order was placed with 30 users,
+  # and 0 here would mean 30 seats and ~90 child Applications racing the
+  # platform up. Capacity is not the issue; legibility is — at 30, a
+  # genuine platform bug and ordinary scheduling pressure look identical.
+  #
+  # Raise it once the platform Applications are Healthy. It is a one-line
+  # commit on this branch; Argo picks it up on the next poll.
+  count: 1
   namespacePrefix: "agentic-user"
   # OpenShift username prefix for the claw-user RoleBinding.
   userPrefix: "user"
