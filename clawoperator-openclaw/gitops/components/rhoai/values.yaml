@@ -7,3 +7,23 @@ rhoai:
   # False when the RHDP order form already installed the RHOAI base.
   # The DataScienceCluster is applied regardless — see the root chart.
   installOperator: true
+
+  # RHOAI "Observe & monitor": Usage, model metrics, distributed
+  # workloads. See templates/observability-operators.yaml for why all
+  # three operators are installed even if you never open those pages.
+  observability:
+    enabled: true
+    monitoringNamespace: "redhat-ods-monitoring"
+    metricsStorage: "20Gi"
+    metricsRetention: "7d"
+    tracesRetention: "168h"
+    traceSampleRatio: "0.1"
+    operators:
+      # NOT assumed pre-installed. A self-managed OCP cluster has none
+      # of these; only ROSA tends to ship the first.
+      - name: cluster-observability-operator
+        channel: stable
+      - name: opentelemetry-product
+        channel: stable
+      - name: tempo-product
+        channel: stable

@@ -244,6 +244,11 @@ components:
   rhoai:
     enabled: true
     channel: "stable-3.x"
+    # RHOAI "Observe & monitor". Installs three operators and configures
+    # the DSCI metrics stack. Leave on: an unmet monitoring prerequisite
+    # puts the DSCI in Ready=False and hides UNRELATED dashboard pages,
+    # so half-configuring it is worse than not configuring it.
+    observability: true
 
   # ODF Multi-Cloud Gateway standalone for Loki's object storage. Wave -20.
   odfMcg:

@@ -83,6 +83,8 @@ spec:
           # generic base does not enable aigateway, mlflowoperator,
           # mcplifecycle, modelregistry, ogx or trustyai.
           installOperator: {{ not .Values.bases.rhoai }}
+          observability:
+            enabled: {{ .Values.components.rhoai.observability }}
   destination:
     server: https://kubernetes.default.svc
     namespace: redhat-ods-operator

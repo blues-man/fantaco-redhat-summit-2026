@@ -20,3 +20,8 @@ mcpCatalog:
     # trustyai and the gen-ai-ui pod are. Found on sv68v 2026-11-19
     # with everything Running and the nav empty.
     - genAiStudio
+    # observabilityDashboard: the "Observe & monitor" section. The flag
+    # is necessary but NOT sufficient -- its nav entry also carries a
+    # customCondition on dsciStatus, so the DSCI must actually be
+    # serving a monitoring stack. See deploy-rhoai-observability.sh.
+    - observabilityDashboard

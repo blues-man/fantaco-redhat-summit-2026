@@ -1,0 +1,163 @@
+{{- if .Values.rhoai.observability.enabled }}
+{{/*
+Configure the DSCI's monitoring stack.
+
+A hook Job for two reasons. The DSCInitialization is a singleton the
+operator owns and fills with unrelated fields, so `oc apply` would fight
+it — the scripted form is deliberately `oc patch --type=merge`. And it
+must not run until the three operator CSVs are Succeeded, or the DSCI
+lands in Ready=False/MissingOperator, which ALSO hides unrelated things
+in the dashboard.
+
+WHY metrics.storage IS NOT OPTIONAL. With `metrics: {}` the DSCI reports
+
+  MonitoringReady          True   "Monitoring stack is initialized"
+  MonitoringStackAvailable False  MetricsNotConfigured
+
+and redhat-ods-monitoring is created EMPTY — no Prometheus, no Perses,
+no datasource, so the observability pages have nothing to render.
+MonitoringReady means "initialized", not "collecting". Always judge by
+MonitoringStackAvailable.
+
+NOT re-added from the docs: the RHOAI 3.5 docs show metrics.resources
+(cpulimit/memorylimit/...). The CRD in rhods-operator 3.5.3 has no such
+field — the API warns `unknown field "spec.monitoring.metrics.resources"`
+and silently drops it.
+
+The rhods-operator caches API discovery, so it is restarted after the
+operators appear or it never sees the new CRDs.
+
+This does NOT cover the Perses repairs (stale CRs that are never
+retried, and the perses-operator-access NetworkPolicy naming a COO
+namespace that may not exist). Those are genuine repairs of
+operator-owned state; ../deploy-rhoai-observability.sh owns them.
+*/}}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: rhoai-dsci-monitoring
+  namespace: {{ .Values.rhoai.operatorNamespace }}
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: rhoai-dsci-monitoring
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+rules:
+  - apiGroups: ["dscinitialization.opendatahub.io"]
+    resources: ["dscinitializations"]
+    verbs: ["get", "list", "patch", "update"]
+  - apiGroups: ["operators.coreos.com"]
+    resources: ["clusterserviceversions"]
+    verbs: ["get", "list"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: rhoai-dsci-monitoring
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: rhoai-dsci-monitoring
+subjects:
+  - kind: ServiceAccount
+    name: rhoai-dsci-monitoring
+    namespace: {{ .Values.rhoai.operatorNamespace }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: rhoai-dsci-monitoring
+  namespace: {{ .Values.rhoai.operatorNamespace }}
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  backoffLimit: 3
+  template:
+    spec:
+      serviceAccountName: rhoai-dsci-monitoring
+      restartPolicy: OnFailure
+      containers:
+        - name: dsci
+          image: image-registry.openshift-image-registry.svc:5000/openshift/cli:latest
+          env:
+            - name: MON_NS
+              value: {{ .Values.rhoai.observability.monitoringNamespace | quote }}
+            - name: METRICS_SIZE
+              value: {{ .Values.rhoai.observability.metricsStorage | quote }}
+            - name: METRICS_RETENTION
+              value: {{ .Values.rhoai.observability.metricsRetention | quote }}
+            - name: TRACES_RETENTION
+              value: {{ .Values.rhoai.observability.tracesRetention | quote }}
+            - name: SAMPLE_RATIO
+              value: {{ .Values.rhoai.observability.traceSampleRatio | quote }}
+            - name: OPERATOR_NS
+              value: {{ .Values.rhoai.operatorNamespace | quote }}
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -euo pipefail
+
+              # Wait for ALL THREE CSVs. Patching before they exist is
+              # what produces Ready=False/MissingOperator.
+              for i in $(seq 1 80); do
+                ok=1
+                for pat in cluster-observability opentelemetry tempo; do
+                  st=$(oc get csv -n openshift-operators --no-headers 2>/dev/null \
+                        | grep -i "$pat" | awk '{print $NF}' | head -1)
+                  [ "$st" = "Succeeded" ] || ok=0
+                done
+                [ "$ok" = "1" ] && break
+                echo "waiting for observability operators ($i/80)"
+                sleep 15
+              done
+              if [ "${ok:-0}" != "1" ]; then
+                echo "ERROR: observability operators not Succeeded; refusing to configure" >&2
+                echo "metrics, because an unmet prerequisite also hides unrelated" >&2
+                echo "dashboard pages. Install them and re-run." >&2
+                exit 1
+              fi
+
+              DSCI=$(oc get dscinitialization -o jsonpath='{.items[0].metadata.name}')
+              oc patch dscinitialization "$DSCI" --type=merge -p "{
+                \"spec\":{\"monitoring\":{
+                  \"managementState\":\"Managed\",
+                  \"namespace\":\"${MON_NS}\",
+                  \"alerting\":{},
+                  \"metrics\":{\"replicas\":1,\"storage\":{\"size\":\"${METRICS_SIZE}\",\"retention\":\"${METRICS_RETENTION}\"}},
+                  \"traces\":{\"sampleRatio\":\"${SAMPLE_RATIO}\",\"storage\":{\"backend\":\"pv\",\"retention\":\"${TRACES_RETENTION}\"}}
+                }}}"
+              echo "DSCI $DSCI monitoring configured"
+
+              # API discovery is cached; without this the operator never
+              # sees the CRDs the new operators installed.
+              oc rollout restart deploy/rhods-operator -n "$OPERATOR_NS" || true
+
+              # Judge by MonitoringStackAvailable, never MonitoringReady.
+              for i in $(seq 1 40); do
+                st=$(oc get dscinitialization "$DSCI" \
+                      -o jsonpath='{.status.conditions[?(@.type=="MonitoringStackAvailable")].status}' 2>/dev/null || true)
+                if [ "$st" = "True" ]; then echo "MonitoringStackAvailable=True"; exit 0; fi
+                echo "waiting for MonitoringStackAvailable (currently ${st:-unset}, $i/40)"
+                sleep 15
+              done
+              echo "WARNING: MonitoringStack did not report Available in time." >&2
+              echo "Run ../deploy-rhoai-observability.sh --check for the Perses repairs." >&2
+          resources:
+            requests: {cpu: 10m, memory: 64Mi}
+            limits: {cpu: 500m, memory: 256Mi}
+{{- end }}

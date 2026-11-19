@@ -1,0 +1,42 @@
+{{- if .Values.rhoai.observability.enabled }}
+{{/*
+The three operators RHOAI's "Observe & monitor" section requires.
+
+ALL THREE, and the third is the one that bites. The RHOAI docs and
+deploy-rhoai-observability.sh both assume a cluster "usually ships" the
+Cluster Observability Operator — true on ROSA, NOT true on a
+self-managed OCP sandbox. Without it the DSCI sits at
+
+  Ready=False MissingOperator
+  "ClusterObservability operator must be installed for metrics configuration"
+
+and redhat-ods-monitoring is created with zero pods.
+
+That failure is worse than a missing nav item: an unready DSCI also
+makes UNRELATED things disappear from the dashboard — the
+models-as-a-service project vanished this way once. So these are
+installed whether or not you intend to use the monitoring pages.
+
+Do NOT also configure DSCI metrics without these present; that is the
+ordering that produces the broken state above. The DSCI patch lives in
+dsci-monitoring-job.yaml and waits for the CSVs.
+*/}}
+{{- range .Values.rhoai.observability.operators }}
+---
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: {{ .name }}
+  namespace: openshift-operators
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+  labels:
+    demo.redhat.com/application: "openclaw-on-openshift"
+spec:
+  channel: {{ .channel }}
+  name: {{ .name }}
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+  installPlanApproval: Automatic
+{{- end }}
+{{- end }}
