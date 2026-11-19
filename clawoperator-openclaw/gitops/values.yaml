@@ -243,7 +243,14 @@ components:
     # without it every seat fails with "resource mapping not found".
     enabled: true
     repoUrl: "https://github.com/codeready-toolchain/claw-operator.git"
-    revision: "main"
+    # The default branch is master, not main -- Argo fails the whole
+    # Application with "unable to resolve 'main' to a commit SHA".
+    #
+    # Pinned to the SHA rather than a branch, and that is deliberate:
+    # 554d988 is the validated commit (it ships OpenClaw 2026.6.35), and
+    # `make dev-deploy` renders the CRDs FROM THE WORKING TREE, so a
+    # moving branch would silently change the CRDs under the operator.
+    revision: "554d988bc94c4f2e2689260c7e0b19fce746e669"
     path: "config/default"
 
   # Gateway, PostgreSQL, Connectivity Link, Kuadrant, and the
