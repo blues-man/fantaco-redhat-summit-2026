@@ -1,0 +1,35 @@
+{{- if .Values.audience.enabled }}
+---
+# The route attendees actually use.
+#
+# Port 18789 is the Control UI, not the API port, and the one-hour
+# timeout matters: an agent run that streams for longer than the router
+# default is cut off mid-answer, which looks like the agent hanging.
+#
+# Hitting this URL ASSIGNS A SEAT when the broker is in play. Never test
+# the attendee link before doors open -- use the instance Route or
+# /health/ready instead.
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: audience
+  namespace: {{ .Values.seat.namespace }}
+  labels:
+    app: claw
+    audience-route: "true"
+    demo.redhat.com/application: "openclaw-on-openshift"
+  annotations:
+    haproxy.router.openshift.io/timeout: "3600s"
+    argocd.argoproj.io/sync-wave: "10"
+spec:
+  host: {{ include "seat.audienceHost" . | quote }}
+  to:
+    kind: Service
+    name: instance
+    weight: 100
+  port:
+    targetPort: 18789
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+{{- end }}

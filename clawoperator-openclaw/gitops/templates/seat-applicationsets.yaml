@@ -54,6 +54,14 @@ spec:
               index: "{{`{{seat}}`}}"
               namespace: "{{`{{namespace}}`}}"
               username: "{{ .Values.seats.userPrefix }}{{`{{seat}}`}}"
+              userCode: "user{{`{{seat}}`}}"
+            cluster:
+              appsDomain: {{ .Values.deployer.domain | quote }}
+            deployer:
+              guid: {{ include "openclaw.guid" . | quote }}
+            audience:
+              enabled: {{ .Values.seats.audienceRoute }}
+              code: {{ .Values.seats.audienceCode | quote }}
             images:
               openclaw: {{ .Values.images.openclaw | quote }}
             maas:

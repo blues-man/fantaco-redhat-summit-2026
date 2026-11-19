@@ -1,7 +1,39 @@
 seat:
   index: "1"
   namespace: "agentic-user1"
-  username: "user1"
+  username: "agentic-user1"
+  # The per-seat part of the audience hostname.
+  userCode: "user1"
+
+cluster:
+  # Apps domain, for the audience Route and allowedOrigins.
+  appsDomain: ""
+
+deployer:
+  guid: ""
+
+audience:
+  # The Route attendees actually use, and the origin the Control UI
+  # must accept or the browser is refused.
+  enabled: true
+  # Empty derives a stable 5-char code from the GUID. Pin it to the
+  # code the broker already issued if update-broker-ocp.sh has run.
+  code: ""
+
+mcp:
+  # The three servers the demo uses. The operator also derives the
+  # proxy allowlist from this block, so dropping one silently breaks
+  # egress to it as well as removing the tools.
+  servers:
+    - name: customer
+      service: mcp-customer-service
+      port: 9001
+    - name: product
+      service: mcp-product-service
+      port: 9003
+    - name: sales-order
+      service: mcp-sales-order-service
+      port: 9004
 
 images:
   openclaw: "quay.io/bluesman/openclaw:2026.6.35-mlflow-preview7"

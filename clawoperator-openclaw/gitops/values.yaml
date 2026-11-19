@@ -113,6 +113,16 @@ seats:
   # claw-user to identities that never exist, and does it silently: the
   # RoleBindings apply cleanly and nobody can use them.
   userPrefix: "agentic-user"
+
+  # The Route attendees use, claw-<code>-user<N>.<apps domain>, plus the
+  # matching Control UI allowed origin. Without it preflight fails four
+  # checks and the broker has nothing to hand out.
+  audienceRoute: true
+  # Empty derives a stable 5-char code from the GUID rather than the
+  # random one audience-reset.sh keeps in .state -- a value that changed
+  # on every render would hand out a new URL and invalidate the QR code
+  # on every sync. Pin it if the broker has already issued one.
+  audienceCode: ""
   # ResourceQuota per seat. Measured footprint is 11 pods / 0.57 CPU /
   # 2.66 GiB; these carry ~40% headroom and exist to stop one runaway seat
   # starving the rest.

@@ -59,6 +59,21 @@ spec:
         - name: {{ .Values.maas.keySecretName }}
           key: api-key
       domain: {{ $domain | quote }}
+  # THE MCP SERVERS. Without these the agent has no tools, which is the
+  # entire demo -- and preflight reports it three different ways:
+  # McpServersConfigured not set, "MCP customer: not configured", and
+  # "Proxy allowlist missing mcp-customer-service" (the operator derives
+  # the proxy allowlist from this block, so one omission fails all three).
+  #
+  # Service names, not routes: traffic stays in the namespace. The
+  # servers speak streamable HTTP on /mcp -- a plain GET returns 406
+  # because it wants the MCP Accept header, which means UP, not broken.
+  mcpServers:
+{{- range .Values.mcp.servers }}
+    {{ .name }}:
+      url: {{ printf "http://%s:%d/mcp" .service (int .port) | quote }}
+      transport: streamable-http
+{{- end }}
   customProviders:
     - name: openai
       baseUrl: {{ .Values.maas.apiBase | quote }}
@@ -69,6 +84,23 @@ spec:
           alias: {{ .Values.maas.model }}
   config:
     raw:
+      gateway:
+        controlUi:
+          # Attendees reach the gateway through the audience Route, so
+          # its origin must be listed or the browser connection is
+          # refused with "Browser origin not allowed".
+          #
+          # It lives here rather than being patched in afterwards
+          # because the operator RE-SEEDS gateway.controlUi.allowedOrigins
+          # from its own template on every pod start. spec.config.raw is
+          # merged BEFORE that enrichment, so this survives a restart --
+          # which is what set-audience-origins.sh exists to repair when
+          # it was patched the other way.
+          allowedOrigins:
+            - {{ printf "https://instance-%s.%s" .Values.seat.namespace .Values.cluster.appsDomain | quote }}
+{{- if .Values.audience.enabled }}
+            - {{ printf "https://%s" (include "seat.audienceHost" .) | quote }}
+{{- end }}
       agents:
         defaults:
           model:
