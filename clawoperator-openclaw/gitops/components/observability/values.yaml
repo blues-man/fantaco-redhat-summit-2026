@@ -7,7 +7,14 @@ observability:
   loki:
     enabled: true
     namespace: "openshift-logging"
-    channel: "stable-6.2"
+    # stable-6.2 does NOT exist; the Subscription dies with
+    # ResolutionFailed and, because Argo retries the whole operation,
+    # every later resource in this chart stays Missing. On OCP 4.22 the
+    # package offers stable-6.5/6.6/6.7, default 6.7. Verify before
+    # changing OCP version:
+    #   oc get packagemanifest loki-operator -n openshift-marketplace \
+    #     -o jsonpath='{.status.defaultChannel}'
+    channel: "stable-6.7"
     obcName: "loki-bucket"
     # Must match odf.obcStorageClassName in components/odf-mcg.
     obcStorageClass: "openclaw-mcg-pv"

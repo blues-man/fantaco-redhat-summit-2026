@@ -35,6 +35,12 @@ rules:
   - apiGroups: [""]
     resources: ["services"]
     verbs: ["get", "patch"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -82,6 +88,24 @@ spec:
                     service.beta.openshift.io/serving-cert-secret-name=authorino-server-cert \
                     --overwrite
                   echo "annotated $SVC"
+
+                  # AND RESTART AUTHORINO. Annotating only asks
+                  # service-ca to mint the Secret; the pod is already
+                  # running and never loads it. Until it restarts the
+                  # gateway AuthPolicy stays
+                  #   Enforced=False "waiting for the following
+                  #   components to sync: [Authorino]"
+                  # and MaaS key minting returns HTTP 500 with no hint
+                  # as to why. Verified on sv68v 2026-11-19: the restart
+                  # alone flipped it to Enforced=True and the smoke test
+                  # then passed.
+                  for j in $(seq 1 30); do
+                    oc get secret authorino-server-cert -n kuadrant-system >/dev/null 2>&1 && break
+                    echo "waiting for service-ca to mint the cert ($j/30)"
+                    sleep 5
+                  done
+                  oc rollout restart deployment/authorino -n kuadrant-system || true
+                  echo "restarted authorino so it loads the cert"
                   exit 0
                 fi
                 echo "waiting for $SVC ($i/120)"
