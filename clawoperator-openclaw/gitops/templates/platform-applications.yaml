@@ -489,6 +489,7 @@ spec:
       valuesObject:
         mcpCatalog:
           dashboardNamespace: {{ .Values.components.mcpCatalog.dashboardNamespace }}
+          setDashboardFlags: {{ .Values.components.mcpCatalog.setDashboardFlags }}
           exemplarNamespace: {{ printf "%s%d" .Values.seats.namespacePrefix (int .Values.components.mcpCatalog.exemplarSeat) }}
   destination:
     server: https://kubernetes.default.svc

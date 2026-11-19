@@ -1,0 +1,127 @@
+{{- if .Values.mcpCatalog.setDashboardFlags }}
+{{/*
+Turn on the dashboard feature flags that reveal the catalog.
+
+Populating gen-ai-aa-mcp-servers is only half the job: the nav item is
+ALSO gated on feature flags that default to false in OdhDashboardConfig.
+With them off the ConfigMap is correct, the servers are reachable, and
+the page simply is not in the menu — which looks like the catalog work
+failed. Verified on sv68v 2026-11-19: 3 entries present, nav hidden.
+
+The full gate, from the dashboard JS bundle:
+  [MCP_CATALOG]: { featureFlags: ["mcpCatalog"],
+                   requiredComponents: [MODEL_REGISTRY] }
+so modelregistry must ALSO be Managed in the DSC — components/rhoai
+handles that half.
+
+A hook Job rather than a resource for the usual reason: the
+OdhDashboardConfig is a singleton created and owned by the RHOAI
+operator, with many other fields in it. Owning it in Helm would mean
+asserting values for settings this chart knows nothing about.
+
+The dashboard CACHES the CR, so the rollout restart is not optional.
+*/}}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: mcp-dashboard-flags
+  namespace: {{ .Values.mcpCatalog.dashboardNamespace }}
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: mcp-dashboard-flags
+  namespace: {{ .Values.mcpCatalog.dashboardNamespace }}
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+rules:
+  - apiGroups: ["opendatahub.io"]
+    resources: ["odhdashboardconfigs"]
+    verbs: ["get", "patch", "update"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: mcp-dashboard-flags
+  namespace: {{ .Values.mcpCatalog.dashboardNamespace }}
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: mcp-dashboard-flags
+subjects:
+  - kind: ServiceAccount
+    name: mcp-dashboard-flags
+    namespace: {{ .Values.mcpCatalog.dashboardNamespace }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mcp-dashboard-flags
+  namespace: {{ .Values.mcpCatalog.dashboardNamespace }}
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  backoffLimit: 3
+  template:
+    spec:
+      serviceAccountName: mcp-dashboard-flags
+      restartPolicy: OnFailure
+      containers:
+        - name: flags
+          image: image-registry.openshift-image-registry.svc:5000/openshift/cli:latest
+          env:
+            - name: DASH_NS
+              value: {{ .Values.mcpCatalog.dashboardNamespace | quote }}
+            - name: FLAGS
+              value: {{ join " " .Values.mcpCatalog.dashboardFlags | quote }}
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -euo pipefail
+              CR=odh-dashboard-config
+              for i in $(seq 1 60); do
+                oc get odhdashboardconfig "$CR" -n "$DASH_NS" >/dev/null 2>&1 && break
+                echo "waiting for $CR ($i/60)"
+                sleep 10
+              done
+              oc get odhdashboardconfig "$CR" -n "$DASH_NS" >/dev/null 2>&1 || {
+                echo "ERROR: $CR never appeared — is the RHOAI dashboard Managed?" >&2
+                exit 1; }
+
+              changed=0
+              for f in $FLAGS; do
+                cur=$(oc get odhdashboardconfig "$CR" -n "$DASH_NS" \
+                        -o jsonpath="{.spec.dashboardConfig.$f}" 2>/dev/null || true)
+                if [ "$cur" = "true" ]; then
+                  echo "$f already true"
+                else
+                  oc patch odhdashboardconfig "$CR" -n "$DASH_NS" --type merge \
+                    -p "{\"spec\":{\"dashboardConfig\":{\"$f\":true}}}"
+                  echo "$f set to true"
+                  changed=1
+                fi
+              done
+
+              # The dashboard caches the CR; without this the flags are
+              # set and the nav still does not change.
+              if [ "$changed" = "1" ]; then
+                oc rollout restart deploy/rhods-dashboard -n "$DASH_NS" || true
+                echo "restarted rhods-dashboard"
+              fi
+          resources:
+            requests: {cpu: 10m, memory: 64Mi}
+            limits: {cpu: 500m, memory: 256Mi}
+{{- end }}

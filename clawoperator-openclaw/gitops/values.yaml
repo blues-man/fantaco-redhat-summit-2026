@@ -292,6 +292,10 @@ components:
     enabled: true
     exemplarSeat: 1
     dashboardNamespace: "redhat-ods-applications"
+    # Flip mcpCatalog/mcpRegistry on in OdhDashboardConfig and restart
+    # the dashboard. Without this the catalog is correctly populated and
+    # the nav item stays hidden, which looks identical to it not working.
+    setDashboardFlags: true
 
   # Session broker. Needs an image built in-cluster first; see
   # components/broker/README.md. Wave 20.

@@ -4,3 +4,12 @@ mcpCatalog:
   # cluster-scoped, so 100 seats x 3 servers would be 300 near-identical
   # entries; one seat acts as the exemplar.
   exemplarNamespace: "agentic-user1"
+
+  # Reveal the catalog in the dashboard nav. The ConfigMap above is only
+  # half the job -- these flags default to false, and with them off the
+  # page is simply absent from the menu. Needs modelregistry Managed too
+  # (components/rhoai). See templates/dashboard-flags-job.yaml.
+  setDashboardFlags: true
+  dashboardFlags:
+    - mcpCatalog
+    - mcpRegistry
