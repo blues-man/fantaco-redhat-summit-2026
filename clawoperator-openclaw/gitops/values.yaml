@@ -149,19 +149,29 @@ images:
   # The MLflow prompt-preview patched gateway. Not in the project org.
   openclaw: "quay.io/bluesman/openclaw:2026.6.35-mlflow-preview7"
 
-  # DOCKER HUB IS CORRECT AND DELIBERATE. quay.io/openclawopenshift carries
-  # the same six names at the same tags, but the images are DIFFERENT
-  # CONTENT: all three quay mcp-server-* images lack httpx and crashloop
-  # with ModuleNotFoundError. That took out ~298 pods on rosa-wv5l4.
-  # See commit 4d17d95. Matching names and tags prove nothing.
+  # QUAY, as of 0f6584e (19 Nov). This flipped twice in one day and the
+  # history is the point: quay originally carried its own 2026-10-23
+  # rebuild under the same tags, NOT a copy of Hub, and its three
+  # mcp-server-* images lacked the httpx their own code imports --
+  # ~298 MCP pods crashlooped with ModuleNotFoundError (4d17d95 reverted
+  # to Hub for that reason). quay has since been republished from the
+  # known-good Hub builds, with the October ones preserved as
+  # <tag>-20261023, and verified by RUNNING each image
+  # (`python3 -c 'import httpx'`) rather than by checking it exists.
+  #
+  # The lesson worth keeping: matching names and tags say nothing about
+  # content. If you switch registries again, run the image.
+  #
+  # The other docker.io/burrsutter images in these charts belong to a
+  # different demo and are deliberately left alone.
   #
   # Above ~60 seats, mirror into the cluster registry instead of raising
   # this: 100 namespaces pulling six images exhausts Docker Hub's anonymous
   # limit around seat 62, and it presents as a broken demo, not a quota
   # error. Run ../mirror-fantaco-images.sh, then set both prefixes to
   # image-registry.openshift-image-registry.svc:5000/<mirror-namespace>.
-  fantacoPrefix: "docker.io/burrsutter"
-  mcpPrefix: "docker.io/burrsutter"
+  fantacoPrefix: "quay.io/openclawopenshift"
+  mcpPrefix: "quay.io/openclawopenshift"
   fantacoTag: "1.0.0"
   mcpTag: "2.0.0"
 
