@@ -102,7 +102,7 @@ spec:
                   for j in $(seq 1 30); do
                     oc get secret authorino-server-cert -n kuadrant-system >/dev/null 2>&1 && break
                     echo "waiting for service-ca to mint the cert ($j/30)"
-                    sleep 5
+                    sleep 10
                   done
                   oc rollout restart deployment/authorino -n kuadrant-system || true
                   echo "restarted authorino so it loads the cert"

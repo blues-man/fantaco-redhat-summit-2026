@@ -92,9 +92,9 @@ spec:
             - |
               set -euo pipefail
               CR=odh-dashboard-config
-              for i in $(seq 1 60); do
+              for i in $(seq 1 120); do
                 oc get odhdashboardconfig "$CR" -n "$DASH_NS" >/dev/null 2>&1 && break
-                echo "waiting for $CR ($i/60)"
+                echo "waiting for $CR ($i/120)"
                 sleep 10
               done
               oc get odhdashboardconfig "$CR" -n "$DASH_NS" >/dev/null 2>&1 || {
