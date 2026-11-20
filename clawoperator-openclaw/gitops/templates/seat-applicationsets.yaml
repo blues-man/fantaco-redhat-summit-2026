@@ -71,9 +71,7 @@ spec:
             maas:
               model: {{ include "openclaw.maasModel" . | quote }}
               apiBase: {{ include "openclaw.maasApiBase" . | quote }}
-              contextWindow: {{ .Values.maas.contextWindow }}
-              contextTokens: {{ .Values.maas.contextTokens }}
-              maxTokens: {{ .Values.maas.maxTokens }}
+              {{- include "openclaw.modelLimits" . | nindent 14 }}
               # Per-seat key secret. The VALUE is not here and cannot be:
               # sk-oai-... keys only exist once the MaaS chain is Ready, so
               # maas-mint-seat-keys.sh --apply writes them. This chart

@@ -261,10 +261,36 @@ maas:
   # but never programmed. Set false to reuse RHOAI's
   # data-science-gateway-class instead.
   createGatewayClass: true
-  # Model context sizing written into the Claw CR for qwen3-235b.
-  contextWindow: 262144
-  contextTokens: 200000
-  maxTokens: 16384
+  # Context sizing, PER MODEL.
+  #
+  # These used to be three fixed numbers tuned for qwen3-235b, while
+  # the model itself comes from the order form. On w5xfc the form
+  # defaulted to llama-scout-17b and the seat was handed
+  # contextWindow 262144 for a model that does not have it -- a
+  # mismatch that surfaces as truncation or provider errors mid-run,
+  # not as anything that fails a health check.
+  #
+  # 1-deploy-claw.sh derives these from the model name; same table
+  # here, including its conservative else-branch for anything unlisted.
+  # Add a model rather than editing the default: an over-large
+  # contextWindow is the failure mode, not an under-large one.
+  modelLimits:
+    default:
+      contextWindow: 128000
+      contextTokens: 128000
+      maxTokens: 16384
+    qwen3-235b-a22b:
+      contextWindow: 262144
+      contextTokens: 200000
+      maxTokens: 16384
+    qwen3-235b-bedrock:
+      contextWindow: 262144
+      contextTokens: 200000
+      maxTokens: 16384
+    qwen3-14b:
+      contextWindow: 40960
+      contextTokens: 32768
+      maxTokens: 4096
 
 # ============================================================
 # Storage

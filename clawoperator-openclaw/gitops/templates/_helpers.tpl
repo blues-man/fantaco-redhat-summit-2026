@@ -140,3 +140,13 @@ orders the catalog item to strip it.
 {{- define "openclaw.maasApiBase" -}}
 {{- printf "https://%s/v1" (include "openclaw.maasGatewayHost" .) -}}
 {{- end -}}
+
+{{/*
+Context limits for whichever model was actually ordered, falling back
+to the conservative default for anything not in the table.
+*/}}
+{{- define "openclaw.modelLimits" -}}
+{{- $m := include "openclaw.maasModel" . -}}
+{{- $l := index .Values.maas.modelLimits $m | default .Values.maas.modelLimits.default -}}
+{{- toYaml $l -}}
+{{- end -}}
