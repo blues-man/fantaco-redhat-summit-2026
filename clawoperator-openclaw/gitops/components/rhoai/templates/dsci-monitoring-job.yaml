@@ -112,23 +112,43 @@ spec:
             - |
               set -euo pipefail
 
-              # Wait for ALL THREE CSVs. Patching before they exist is
-              # what produces Ready=False/MissingOperator.
+              # Wait for all three operators, ACROSS NAMESPACES and by
+              # POD, not by CSV phase.
+              #
+              # -A matters: COO deliberately lives in
+              # openshift-cluster-observability-operator, not
+              # openshift-operators, so a namespaced lookup never finds
+              # it and this job would time out blaming a missing
+              # operator that is installed and running.
+              #
+              # Pods matter: a CSV reports Succeeded BEFORE
+              # observability-operator and perses-operator are actually
+              # Running. Patching then, or restarting rhods-operator
+              # then, re-caches an empty API discovery and the DSCI
+              # stays at Ready=False/MissingOperator. Doing this by hand
+              # took two restarts before it stuck.
               for i in $(seq 1 80); do
                 ok=1
                 for pat in cluster-observability opentelemetry tempo; do
-                  st=$(oc get csv -n openshift-operators --no-headers 2>/dev/null \
-                        | grep -i "$pat" | awk '{print $NF}' | head -1)
-                  [ "$st" = "Succeeded" ] || ok=0
+                  st=$(oc get csv -A --no-headers 2>/dev/null \
+                        | grep -i "$pat" | awk '{print $NF}' | grep -c Succeeded || true)
+                  [ "${st:-0}" -ge 1 ] || ok=0
+                done
+                # The COO controllers themselves, which is what RHOAI's
+                # precondition actually needs present.
+                for dep in observability-operator perses-operator; do
+                  rdy=$(oc get deploy -A --no-headers 2>/dev/null \
+                        | awk -v d="$dep" '$2==d {print $3}' | head -1)
+                  [ "$rdy" = "1/1" ] || ok=0
                 done
                 [ "$ok" = "1" ] && break
-                echo "waiting for observability operators ($i/80)"
+                echo "waiting for observability operators and their pods ($i/80)"
                 sleep 15
               done
               if [ "${ok:-0}" != "1" ]; then
-                echo "ERROR: observability operators not Succeeded; refusing to configure" >&2
-                echo "metrics, because an unmet prerequisite also hides unrelated" >&2
-                echo "dashboard pages. Install them and re-run." >&2
+                echo "ERROR: observability operators are not all Running; refusing" >&2
+                echo "to configure metrics, because an unmet prerequisite puts the" >&2
+                echo "DSCI in Ready=False and that hides UNRELATED dashboard pages." >&2
                 exit 1
               fi
 
