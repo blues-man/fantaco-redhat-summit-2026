@@ -58,7 +58,11 @@ rules:
     verbs: ["get", "list"]
   - apiGroups: ["apps"]
     resources: ["deployments"]
-    verbs: ["get", "patch"]
+    # list, because the wait below uses `oc get deploy -A` to find the
+    # COO controllers wherever they are installed. Without list that
+    # call is denied, and see the || true note at its call site for why
+    # a denied call there was fatal rather than merely unhelpful.
+    verbs: ["get", "list", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -131,14 +135,21 @@ spec:
                 ok=1
                 for pat in cluster-observability opentelemetry tempo; do
                   st=$(oc get csv -A --no-headers 2>/dev/null \
-                        | grep -i "$pat" | awk '{print $NF}' | grep -c Succeeded || true)
+                        | grep -i "$pat" | awk '{print $NF}' | grep -c Succeeded 2>/dev/null || true)
                   [ "${st:-0}" -ge 1 ] || ok=0
                 done
                 # The COO controllers themselves, which is what RHOAI's
                 # precondition actually needs present.
                 for dep in observability-operator perses-operator; do
+                  # `|| true` is load-bearing. With set -o pipefail a failed
+                  # pipeline makes the ASSIGNMENT non-zero, and set -e then
+                  # kills the job -- so a single denied or transient oc call
+                  # ends the run instead of causing one more poll. That is
+                  # what an RBAC gap did here: deployments had no list verb,
+                  # this died on iteration one, and the job reported a
+                  # missing operator that was installed and Running.
                   rdy=$(oc get deploy -A --no-headers 2>/dev/null \
-                        | awk -v d="$dep" '$2==d {print $3}' | head -1)
+                        | awk -v d="$dep" '$2==d {print $3}' | head -1 || true)
                   [ "$rdy" = "1/1" ] || ok=0
                 done
                 # if/then, NOT `cond && break`: under set -euo pipefail an
@@ -158,7 +169,10 @@ spec:
                 exit 1
               fi
 
-              DSCI=$(oc get dscinitialization -o jsonpath='{.items[0].metadata.name}')
+              DSCI=$(oc get dscinitialization -o jsonpath='{.items[0].metadata.name}' || true)
+              if [ -z "${DSCI:-}" ]; then
+                echo "ERROR: no DSCInitialization found" >&2; exit 1
+              fi
               oc patch dscinitialization "$DSCI" --type=merge -p "{
                 \"spec\":{\"monitoring\":{
                   \"managementState\":\"Managed\",
