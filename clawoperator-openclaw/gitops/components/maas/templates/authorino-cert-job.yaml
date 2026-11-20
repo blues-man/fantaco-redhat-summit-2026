@@ -100,7 +100,7 @@ spec:
                   # alone flipped it to Enforced=True and the smoke test
                   # then passed.
                   for j in $(seq 1 30); do
-                    oc get secret authorino-server-cert -n kuadrant-system >/dev/null 2>&1 && break
+                    if oc get secret authorino-server-cert -n kuadrant-system >/dev/null 2>&1; then break; fi
                     echo "waiting for service-ca to mint the cert ($j/30)"
                     sleep 10
                   done
