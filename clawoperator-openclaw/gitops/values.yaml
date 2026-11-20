@@ -170,23 +170,33 @@ images:
   # limit around seat 62, and it presents as a broken demo, not a quota
   # error. Run ../mirror-fantaco-images.sh, then set both prefixes to
   # image-registry.openshift-image-registry.svc:5000/<mirror-namespace>.
-  # DOCKER HUB, because the quay repos are PRIVATE and this chart has to
-  # work on a cluster ordered five minutes ago with no credentials.
+  # QUAY. Settled 2026-11-20, after the six repos were made public.
   #
-  # 0f6584e made quay canonical for the scripts path and that is fine
-  # there -- rosa-wv5l4 can pull them. On sv68v the switch produced
-  #   Failed to pull image "quay.io/openclawopenshift/fantaco-product-main:1.0.0":
-  #   unauthorized: access to the requested resource is not authorized
-  # Verified against the registry API rather than guessing: fetch an
-  # anonymous pull token from quay.io/v2/auth and request the manifest.
-  # All six openclawopenshift repos answer 401; quay.io/bluesman/openclaw
-  # answers 200 by the same method. So they are private, not missing.
+  # This prefix moved four times in two days, so the evidence matters
+  # more than the answer:
+  #   1. -> quay, on the assumption it mirrored Hub.
+  #   2. -> Hub (4d17d95): quay carried its own 2026-10-23 rebuild under
+  #      the same tags, missing the httpx its own code imports. ~298 MCP
+  #      pods crashlooped. Matching names and tags say nothing about
+  #      content.
+  #   3. -> quay (0f6584e): republished from the known-good Hub builds,
+  #      verified by RUNNING each image, October ones kept as
+  #      <tag>-20261023.
+  #   4. -> Hub, then back here: the repos were PRIVATE, so step 3 broke
+  #      a freshly ordered cluster with "unauthorized: access to the
+  #      requested resource is not authorized". Now made public and
+  #      confirmed anonymously: a pull token from quay.io/v2/auth plus a
+  #      manifest request returns 200 for all six, and the quay API
+  #      reports is_public.
   #
-  # To make quay canonical here too, either make those six repos public,
-  # or set images.pullSecret below. Until then Hub is the only prefix a
-  # fresh order can actually pull.
-  fantacoPrefix: "docker.io/burrsutter"
-  mcpPrefix: "docker.io/burrsutter"
+  # Two checks before ever changing this again, because each one was
+  # learned the expensive way:
+  #   content:    podman run <img> python3 -c 'import httpx'
+  #   visibility: anonymous token + manifest request must return 200
+  #               (a bare 401 proves nothing -- public registries 401
+  #                before the token exchange)
+  fantacoPrefix: "quay.io/openclawopenshift"
+  mcpPrefix: "quay.io/openclawopenshift"
 
   # Optional registry credentials, for a private prefix above (or a
   # mirror that needs auth). A .dockerconfigjson string -- inject it the
