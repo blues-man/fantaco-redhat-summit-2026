@@ -25,3 +25,21 @@ mcpCatalog:
     # customCondition on dsciStatus, so the DSCI must actually be
     # serving a monitoring stack. See deploy-rhoai-observability.sh.
     - observabilityDashboard
+    # externalModels: the External models page. Without it the MaaS
+    # model is Ready and INVISIBLE, which reads as "the model never
+    # deployed". From the scripts-side handoff, measured on rosa-wv5l4.
+    - externalModels
+    # modelAsService: the Models-as-a-Service pages.
+    - modelAsService
+    # promptManagement: the prompt registry.
+    #
+    # The scripts-side handoff says DO NOT enable this, because the
+    # flag only reveals the page and nothing there creates the MLflow
+    # CR the page needs -- Save prompt then fails with Service
+    # Unavailable. That is correct for the scripts path. It does not
+    # apply here: components/observability models the CR (named
+    # literally `mlflow`, backendStoreUriFrom, ?sslmode=disable, its
+    # own PostgreSQL). Verified on sv68v: Available=True, Migration
+    # completed. If you ever set observability.mlflowRhoai: false,
+    # drop this flag with it.
+    - promptManagement

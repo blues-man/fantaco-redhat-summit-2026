@@ -21,9 +21,30 @@ rhoai:
     operators:
       # NOT assumed pre-installed. A self-managed OCP cluster has none
       # of these; only ROSA tends to ship the first.
+      #
+      # NOTE THE NAMESPACE on the first one. COO goes in its OWN
+      # namespace, not openshift-operators, for two reasons measured on
+      # sv68v:
+      #   1. RHOAI's monitoring precondition keeps reporting
+      #      "ClusterObservability operator must be installed" when COO
+      #      is installed cluster-wide, even with the CSV Succeeded and
+      #      every CRD registered.
+      #   2. RHOAI creates a NetworkPolicy perses-operator-access in
+      #      redhat-ods-monitoring admitting port 8080 only from
+      #      namespace openshift-cluster-observability-operator. Install
+      #      COO anywhere else and that policy can never match: Perses
+      #      serves 200s with zero dashboards and the console says
+      #      "No dashboards were found. Verify that the monitoring stack
+      #      is configured correctly", pointing at a stack that is green.
+      # Installing it where RHOAI expects avoids the trap instead of
+      # patching the policy afterwards.
       - name: cluster-observability-operator
         channel: stable
+        namespace: openshift-cluster-observability-operator
+        ownNamespace: true
       - name: opentelemetry-product
         channel: stable
+        namespace: openshift-operators
       - name: tempo-product
         channel: stable
+        namespace: openshift-operators

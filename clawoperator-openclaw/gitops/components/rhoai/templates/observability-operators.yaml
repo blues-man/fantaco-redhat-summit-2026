@@ -22,12 +22,31 @@ ordering that produces the broken state above. The DSCI patch lives in
 dsci-monitoring-job.yaml and waits for the CSVs.
 */}}
 {{- range .Values.rhoai.observability.operators }}
+{{- if .ownNamespace }}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .namespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+---
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: {{ .name }}
+  namespace: {{ .namespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  upgradeStrategy: Default
+{{- end }}
 ---
 apiVersion: operators.coreos.com/v1alpha1
 kind: Subscription
 metadata:
   name: {{ .name }}
-  namespace: openshift-operators
+  namespace: {{ .namespace }}
   annotations:
     argocd.argoproj.io/sync-wave: "3"
   labels:
