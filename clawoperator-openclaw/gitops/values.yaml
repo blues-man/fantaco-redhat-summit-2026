@@ -170,8 +170,30 @@ images:
   # limit around seat 62, and it presents as a broken demo, not a quota
   # error. Run ../mirror-fantaco-images.sh, then set both prefixes to
   # image-registry.openshift-image-registry.svc:5000/<mirror-namespace>.
-  fantacoPrefix: "quay.io/openclawopenshift"
-  mcpPrefix: "quay.io/openclawopenshift"
+  # DOCKER HUB, because the quay repos are PRIVATE and this chart has to
+  # work on a cluster ordered five minutes ago with no credentials.
+  #
+  # 0f6584e made quay canonical for the scripts path and that is fine
+  # there -- rosa-wv5l4 can pull them. On sv68v the switch produced
+  #   Failed to pull image "quay.io/openclawopenshift/fantaco-product-main:1.0.0":
+  #   unauthorized: access to the requested resource is not authorized
+  # Verified against the registry API rather than guessing: fetch an
+  # anonymous pull token from quay.io/v2/auth and request the manifest.
+  # All six openclawopenshift repos answer 401; quay.io/bluesman/openclaw
+  # answers 200 by the same method. So they are private, not missing.
+  #
+  # To make quay canonical here too, either make those six repos public,
+  # or set images.pullSecret below. Until then Hub is the only prefix a
+  # fresh order can actually pull.
+  fantacoPrefix: "docker.io/burrsutter"
+  mcpPrefix: "docker.io/burrsutter"
+
+  # Optional registry credentials, for a private prefix above (or a
+  # mirror that needs auth). A .dockerconfigjson string -- inject it the
+  # way AgnosticV injects the MaaS key; never commit one.
+  # Empty means anonymous pulls, which is what Hub needs.
+  pullSecret: ""
+  pullSecretName: "fantaco-registry"
   fantacoTag: "1.0.0"
   mcpTag: "2.0.0"
 

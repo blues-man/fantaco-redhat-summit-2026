@@ -41,6 +41,9 @@ mcp:
 
 images:
   openclaw: "quay.io/bluesman/openclaw:2026.6.35-mlflow-preview7"
+  # .dockerconfigjson for a private prefix. Empty = anonymous pulls.
+  pullSecret: ""
+  pullSecretName: "fantaco-registry"
 
 maas:
   model: "qwen3-235b-a22b"

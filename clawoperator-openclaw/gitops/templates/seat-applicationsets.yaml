@@ -66,6 +66,8 @@ spec:
               code: {{ .Values.seats.audienceCode | quote }}
             images:
               openclaw: {{ .Values.images.openclaw | quote }}
+              pullSecret: {{ .Values.images.pullSecret | quote }}
+              pullSecretName: {{ .Values.images.pullSecretName | quote }}
             maas:
               model: {{ include "openclaw.maasModel" . | quote }}
               apiBase: {{ include "openclaw.maasApiBase" . | quote }}
