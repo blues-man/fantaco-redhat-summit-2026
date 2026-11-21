@@ -466,6 +466,33 @@ if [[ ${#MISSING_NS[@]} -gt 0 ]]; then
     openrouter) CLAW_SECRET_NAME="openrouter-api-key";   CLAW_SECRET_KEY="api-key"; CLAW_SECRET_VALUE="${OPENROUTER_API_KEY:-}" ;;
   esac
 
+  # A NEW seat must have a credential before its Claw CR can start. With
+  # per-seat keys in use this script deliberately writes none, so mint first or
+  # the operator parks every new seat at
+  #   CredentialsResolved=False  Secret "litellm-api-key" not found
+  # with zero pods. Measured on rosa-wv5l4 2026-11-21: `--expand 101 105`
+  # produced 5 namespaces and 0 running pods for exactly this reason. Fail here
+  # with the fix rather than create seats that can never become Ready.
+  if [[ "$PER_SEAT_KEYS" == 1 ]]; then
+    NEED_KEYS=()
+    for NS in "${MISSING_NS[@]}"; do
+      oc get secret "$CLAW_SECRET_NAME" -n "$NS" >/dev/null 2>&1 || NEED_KEYS+=("$NS")
+    done
+    if [[ ${#NEED_KEYS[@]} -gt 0 ]]; then
+      FIRST_N="${NEED_KEYS[0]//[!0-9]/}"
+      LAST_N="${NEED_KEYS[${#NEED_KEYS[@]}-1]//[!0-9]/}"
+      echo "" >&2
+      echo -e "${RED}Error:${RESET} ${#NEED_KEYS[@]} new namespace(s) have no ${CLAW_SECRET_NAME}," >&2
+      echo "and per-seat keys are in use, so this script will not invent one." >&2
+      echo "Their Claw CRs would never become Ready. Mint first, then re-run:" >&2
+      echo "" >&2
+      echo "    ./maas-mint-seat-keys.sh --as-seat --apply ${FIRST_N} ${LAST_N}" >&2
+      echo "" >&2
+      echo "(--as-seat needs those seat identities to exist — see create-seat-users.sh)" >&2
+      exit 1
+    fi
+  fi
+
   for NS in "${MISSING_NS[@]}"; do
     echo -e "  ${CYAN}${NS}${RESET}: Creating secrets + Claw CR..."
 
