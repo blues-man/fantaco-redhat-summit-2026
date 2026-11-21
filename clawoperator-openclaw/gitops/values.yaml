@@ -96,14 +96,18 @@ seats:
   # Leave 0 to take the order form's number of users. Set it to pin a
   # seat count regardless of how many users were ordered.
   #
-  # PINNED TO 1 FOR THE FIRST SYNC. The order was placed with 30 users,
-  # and 0 here would mean 30 seats and ~90 child Applications racing the
-  # platform up. Capacity is not the issue; legibility is — at 30, a
-  # genuine platform bug and ordinary scheduling pressure look identical.
+  # 0 = take the count from the order form (multi_user.num_users, then
+  # user.count). That is the shape we want long term: RHDP decides how
+  # many seats, the chart follows.
   #
-  # Raise it once the platform Applications are Healthy. It is a one-line
-  # commit on this branch; Argo picks it up on the next poll.
-  count: 1
+  # It was pinned to 1 while the hooks were unproven, deliberately --
+  # at 30 seats a genuine bug and ordinary scheduling pressure look
+  # identical in the logs. All four hooks have now run clean at 1 seat
+  # on s4p7f, so the pin comes off.
+  #
+  # Sizing, measured: 11 pods and 2.66 GiB per seat. 30 seats is ~330
+  # pods and ~80 GiB, against 1750 slots and 412 GiB on this cluster.
+  count: 0
   namespacePrefix: "agentic-user"
   # OpenShift username prefix for the claw-user RoleBinding.
   #
