@@ -318,6 +318,83 @@ refuses to run if that directory is not gitignored. They are never printed.
 RoleBindings to a username work before the User object exists; users appear in
 `oc get users` only after each one logs in once.
 
+## Seat metrics: after any reset, 45% of seats export nothing until restarted
+
+Measured on rosa-wv5l4 2026-11-21, straight after an audience reset: **55 of
+100 seats had `up=0`** on the gateway scrape. Grafana and the RHOAI dashboards
+were empty for exactly that reason.
+
+The ServiceMonitor `openclaw-gateway` scrapes port **`gateway` (18789)** at
+path `/api/diagnostics/prometheus`. Triage from inside the pod:
+
+```bash
+oc exec deployment/instance -n agentic-user<N> -c gateway -- \
+  node -e 'fetch("http://localhost:18789/api/diagnostics/prometheus").then(r=>console.log(r.status))'
+```
+
+- **401** — healthy. The endpoint exists and wants the bearer token the
+  ServiceMonitor supplies. This is the good answer, not an error.
+- **404** — the plugin is not loaded.
+- no target at all — rejected ServiceMonitor, a different fault.
+
+**Plugins load only at boot**, so after a reset the fix for most seats is
+simply restarting the gateways. That took this fleet from 55/100 to 99/100.
+
+**For the stragglers, `plugins install` alone is not enough — it fails.** The
+documented remedy says to install the plugin, but on seat 60 the package was
+**already on disk** at the same path as a healthy seat, with byte-identical
+config (`/plugins/entries/diagnostics-prometheus = {"enabled": true}`). The
+plain install exits 1 with *"plugin already exists … delete it first"* and
+leaves the seat broken. It was not registered, not missing. What works:
+
+```bash
+oc exec deployment/instance -n agentic-user<N> -c gateway -- \
+  node /app/dist/index.js --no-color plugins install --force \
+  @openclaw/diagnostics-prometheus@2026.6.35
+# then restart the gateway, then re-check: 404 should become 401
+```
+
+**Verify by namespace, and only on a settled fleet.** Count seats with a
+working target, not raw series — restarted pods leave old series at `up=0`
+and the totals stop adding to 100:
+
+```
+max by (namespace) (up{namespace=~"agentic-user.*", job="instance"})
+```
+
+While pods were still cycling this reported 91, then 87, then 90 healthy with
+the membership changing each time. Once settled it read a stable 100/100.
+Wait for `oc get pods -A | grep agentic-user | grep instance- | grep -v Running`
+to be empty first.
+
+**These metrics are activity-driven.** An idle seat exports exactly one
+metric, `openclaw_telemetry_exporter_total`. One agent turn takes it to **37**,
+including `openclaw_model_call_total` and `openclaw_run_completed_total`. So
+an empty dashboard right after a reset is expected, not a fault — drive a few
+seats before concluding anything. `openclaw_model_tokens_total`,
+`openclaw_model_cost_usd_total` and `openclaw_tool_execution_*` produce no
+series on image 2026.6.35, so those Grafana panels stay empty regardless.
+
+**For the demo, the MaaS numbers live in RHOAI**, not Grafana:
+Observe & monitor → Dashboard → **Usage**, fed by `authorized_hits_total` /
+`authorized_calls_total`. The **Models** tab is legitimately empty — it reads
+`kserve_vllm:*` from locally served models and this demo serves none.
+
+## Audience reset: what it does and does not do
+
+Timing on rosa-wv5l4 2026-11-21: **44m38s for 100 seats**, 100 succeeded.
+(The 241-minute figure elsewhere in this file is for 200 seats.)
+
+- It **hard-deletes all MLflow traces** in its tail. Irreversible.
+- It **does not wipe the Loki bucket** on the ODF reference architecture —
+  it prints *"Loki bucket is not on AWS … skipping wipe"* and relies on the
+  3-day retention instead. Audience logs age out rather than being purged.
+- It **no longer touches the per-seat credential secrets** when
+  `.state/<guid>/maas-seat-keys.csv` exists. Verify by digest rather than
+  trusting it: snapshot `shasum` of each `litellm-api-key` before and after.
+  **Retry each read** — in a 100-call loop two reads returned empty and were
+  hashed as changes, which looked exactly like a clobber and was not.
+
 ## "The model feels slow" — measured baseline, do not raise an RHDP ticket
 
 Measured 2026-11-18 on rosa-wv5l4 against the RHDP MaaS endpoint
