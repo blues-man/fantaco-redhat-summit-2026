@@ -393,7 +393,22 @@ components:
   # cap (50), or when you want MaaS usage attributed per seat rather
   # than collapsed into one cluster-admin row.
   seatIdentities:
-    enabled: false
+    # ON. Attendees log in as agentic-user<N> via htpasswd, which is
+    # what seats.userPrefix binds claw-user and namespace admin to.
+    #
+    # This does NOT replace the Keycloak user<N> identities the order
+    # form creates -- the hook APPENDS to oauth/cluster's
+    # identityProviders, because replacing that list would delete
+    # RHDP's provider and lock everyone out of the console. Expect two
+    # buttons on the login page; the htpasswd one owns the seats.
+    #
+    # The reason to run our own identities rather than reuse RHDP's:
+    # minting a MaaS key AS the seat requires that seat's password, and
+    # RHDP does not inject Keycloak user passwords into the chart. With
+    # htpasswd the chart knows the password, so components.seatKeys
+    # asSeat works and MaaS usage is attributable per seat instead of
+    # collapsing into one cluster-admin row.
+    enabled: true
     # One shared password for every seat. Empty derives one from the
     # GUID. See components/seat-identities/values.yaml before using.
     sharedPassword: ""
