@@ -1,0 +1,28 @@
+{{/*
+The resource that makes the hooks in this chart fire.
+
+Argo does not count hook resources as managed resources, so a chart
+that is only hooks has zero resources, is trivially Synced, never runs
+a sync operation, and its PostSync hooks never run. seat-keys hit
+exactly that and sat green having minted nothing.
+
+The checksum covers the inputs the hooks care about, so changing the
+seat count re-runs them for the new seats.
+*/}}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: seat-runtime-state
+  namespace: {{ .Values.seats.namespacePrefix }}1
+  labels:
+    demo.redhat.com/application: "openclaw-on-openshift"
+  annotations:
+    openclaw.dev/hook-config: {{ printf "%v|%v|%v" .Values.seats.count .Values.heartbeat.muzzle .Values.skills.inject | sha256sum | trunc 16 }}
+data:
+  seatCount: {{ .Values.seats.count | quote }}
+  heartbeatMuzzled: {{ .Values.heartbeat.muzzle | quote }}
+  skillsInjected: {{ .Values.skills.inject | quote }}
+  note: |
+    State for the in-pod steps. The heartbeat control is INVERTED: a
+    file present and comments-only disables it, a MISSING file arms it.

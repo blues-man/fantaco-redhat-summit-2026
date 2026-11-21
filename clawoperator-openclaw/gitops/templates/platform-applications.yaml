@@ -584,6 +584,45 @@ spec:
       selfHeal: true
 {{- end }}
 
+{{- if .Values.components.seatRuntime.enabled }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{ .Release.Name }}-seat-runtime
+  namespace: {{ .Values.argocd.namespace }}
+  labels:
+    {{- include "openclaw.labels" . | nindent 4 }}
+  annotations:
+    # After the seats exist and their keys are minted -- the gateway
+    # has to be running before anything can exec into it.
+    argocd.argoproj.io/sync-wave: "18"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: {{ .Values.argocd.project }}
+  source:
+    repoURL: {{ include "openclaw.repoURL" . }}
+    targetRevision: {{ include "openclaw.revision" . }}
+    path: {{ include "openclaw.basePath" . }}/components/seat-runtime
+    helm:
+      valuesObject:
+        seats:
+          count: {{ include "openclaw.seatCount" . }}
+          namespacePrefix: {{ .Values.seats.namespacePrefix }}
+        heartbeat:
+          muzzle: {{ .Values.components.seatRuntime.muzzleHeartbeat }}
+        skills:
+          inject: {{ .Values.components.seatRuntime.injectSkills }}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ printf "%s1" .Values.seats.namespacePrefix }}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+{{- end }}
+
 {{- if .Values.components.broker.enabled }}
 ---
 # Plain-manifest Application: the broker manifests already exist as YAML

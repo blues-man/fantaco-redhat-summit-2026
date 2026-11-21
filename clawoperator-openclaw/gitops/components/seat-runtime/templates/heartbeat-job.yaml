@@ -1,0 +1,171 @@
+{{- if .Values.heartbeat.muzzle }}
+{{/*
+Muzzle the heartbeat on every seat.
+
+THE RULE IS INVERTED, which is why this exists at all:
+
+  HEARTBEAT.md present, comments only -> "skipped: empty-heartbeat-file"
+  HEARTBEAT.md ABSENT                 -> built-in default prompt fires
+                                         every 30 min, ~40k tokens a poll,
+                                         per seat
+
+So the fix for "stop the heartbeat" is to WRITE a file, not delete one.
+Correlated 8/8 on rosa-tztnl. Every reset that wiped the workspace was
+therefore arming the thing it was trying to disable.
+
+Not the CLI: `system heartbeat disable` writes runtime state into
+state/openclaw.sqlite, which a reset wipes, so the heartbeat silently
+returns. The file is the durable control.
+
+Both paths are written because the gateway reads workspace/ and
+workspace/main/ depending on how the seat was scaffolded.
+
+Idempotent by construction: writing the same template twice is a no-op,
+so selfHeal re-running this costs nothing.
+*/}}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: seat-heartbeat
+  namespace: {{ .Values.seats.namespacePrefix }}1
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "0"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: seat-heartbeat
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "0"
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: seat-heartbeat
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "0"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: seat-heartbeat
+subjects:
+  - kind: ServiceAccount
+    name: seat-heartbeat
+    namespace: {{ .Values.seats.namespacePrefix }}1
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: seat-heartbeat
+  namespace: {{ .Values.seats.namespacePrefix }}1
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      serviceAccountName: seat-heartbeat
+      restartPolicy: Never
+      containers:
+        - name: heartbeat
+          image: image-registry.openshift-image-registry.svc:5000/openshift/cli:latest
+          env:
+            - name: SEAT_COUNT
+              value: {{ .Values.seats.count | quote }}
+            - name: NS_PREFIX
+              value: {{ .Values.seats.namespacePrefix | quote }}
+            - name: HOME_DIR
+              value: {{ .Values.paths.home | quote }}
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -uo pipefail   # not -e: count, do not abort on one seat
+
+              done_=0; skipped=0; declare -a FAILED=()
+
+              for n in $(seq 1 "$SEAT_COUNT"); do
+                ns="${NS_PREFIX}${n}"
+                if ! oc get namespace "$ns" >/dev/null 2>&1; then
+                  skipped=$((skipped+1)); continue
+                fi
+                # The gateway must be up to exec into. A seat whose pod is
+                # not ready yet is skipped, not failed -- the next sync
+                # will catch it, and failing here would red-flag the whole
+                # Application for one slow seat.
+                if ! oc get deploy instance -n "$ns" >/dev/null 2>&1; then
+                  skipped=$((skipped+1)); continue
+                fi
+                ready=$(oc get deploy instance -n "$ns" -o jsonpath='{.status.readyReplicas}' 2>/dev/null || true)
+                if [ "${ready:-0}" -lt 1 ] 2>/dev/null; then
+                  echo "  $ns: gateway not ready yet, skipping"
+                  skipped=$((skipped+1)); continue
+                fi
+
+                if oc exec deployment/instance -n "$ns" -c gateway -- node -e '
+                    const fs = require("fs"), path = require("path");
+                    const HOME = process.env.HOME_DIR || "/home/node/.openclaw";
+                    const TPL =
+                      "<!-- Heartbeat template; comments-only content prevents scheduled heartbeat API calls. -->\n" +
+                      "\n" +
+                      "# Keep this file empty (or with only comments) to skip heartbeat API calls.\n" +
+                      "\n" +
+                      "# Add tasks below when you want the agent to check something periodically.\n";
+                    for (const hb of [HOME + "/workspace/HEARTBEAT.md",
+                                      HOME + "/workspace/main/HEARTBEAT.md"]) {
+                      try {
+                        fs.mkdirSync(path.dirname(hb), { recursive: true });
+                        fs.writeFileSync(hb, TPL);
+                      } catch (e) {}
+                    }
+                  ' >/dev/null 2>&1; then
+                  # VERIFY, never trust the exit code. Anything written into
+                  # a pod after creation lands unreliably at fleet scale.
+                  size=$(oc exec deployment/instance -n "$ns" -c gateway -- \
+                          stat -c %s "${HOME_DIR}/workspace/HEARTBEAT.md" 2>/dev/null || echo 0)
+                  if [ "${size:-0}" -gt 0 ] 2>/dev/null; then
+                    done_=$((done_+1))
+                  else
+                    echo "  $ns: wrote HEARTBEAT.md but it is not there"; FAILED+=("$n")
+                  fi
+                else
+                  echo "  $ns: exec failed"; FAILED+=("$n")
+                fi
+              done
+
+              if [ "${#FAILED[@]}" -gt 0 ] && [ -n "${FAILED[0]:-}" ]; then
+                echo "retrying: ${FAILED[*]}"
+                for n in "${FAILED[@]}"; do
+                  ns="${NS_PREFIX}${n}"
+                  oc exec deployment/instance -n "$ns" -c gateway -- bash -lc \
+                    'mkdir -p "$HOME/.openclaw/workspace" && printf "%s\n" "<!-- Heartbeat template; comments-only content prevents scheduled heartbeat API calls. -->" > "$HOME/.openclaw/workspace/HEARTBEAT.md"' \
+                    >/dev/null 2>&1 && done_=$((done_+1))
+                done
+              fi
+
+              echo "muzzled=$done_ skipped=$skipped of $SEAT_COUNT seats"
+              echo "(a seat skipped because its gateway was not ready is picked up on the next sync)"
+          resources:
+            requests: {cpu: 20m, memory: 96Mi}
+            limits: {cpu: "1", memory: 512Mi}
+{{- end }}

@@ -1,0 +1,9 @@
+apiVersion: v2
+name: seat-runtime
+description: >-
+  The things that live inside a seat's pod rather than in the cluster
+  API: the heartbeat template, and the seeded enterprise skills.
+  Declarative-ish form of manage-heartbeat.sh disable and
+  6-inject-enterprise-skills.sh.
+type: application
+version: 0.1.0

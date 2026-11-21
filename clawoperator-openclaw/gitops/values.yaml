@@ -410,6 +410,19 @@ components:
     # than collapsing into one cluster-admin row. Needs seatIdentities.
     asSeat: true
 
+  # In-pod seat setup: the heartbeat template, and later the seeded
+  # skills. Both are things that live inside the gateway pod rather
+  # than in the cluster API, so both are hooks that exec into it.
+  # Wave 18, after the seats and their keys.
+  seatRuntime:
+    enabled: true
+    # Write workspace/HEARTBEAT.md. The rule is INVERTED: a missing
+    # file ARMS the heartbeat (~40k tokens per poll per seat); a
+    # present, comments-only file disables it.
+    muzzleHeartbeat: true
+    # Not yet implemented as a hook -- still 6-inject-enterprise-skills.sh.
+    injectSkills: false
+
   # The seat ApplicationSets. Wave 10.
   seats:
     enabled: true
