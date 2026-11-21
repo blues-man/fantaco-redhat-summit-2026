@@ -122,6 +122,8 @@ spec:
               value: {{ .Values.skills.templatesPath | quote }}
             - name: SKILLS_PATH
               value: {{ .Values.skills.skillsPath | quote }}
+            - name: WAIT_POLLS
+              value: {{ .Values.paths.gatewayWaitPolls | quote }}
           command:
             - /bin/bash
             - -c
@@ -185,11 +187,19 @@ spec:
                 local ns="$1" pod ok=1
 
                 # oc cp needs a pod name, not a deployment.
-                pod=$(oc get pods -n "$ns" -l claw.sandbox.redhat.com/instance=instance \
-                       --no-headers 2>/dev/null \
-                      | grep '^instance-' | grep -v proxy | grep -v pairing \
-                      | awk '$3=="Running"{print $1}' | head -1 || true)
-                [ -z "$pod" ] && { echo "  $ns: no running gateway pod"; return 1; }
+                # Wait for the gateway. Same reasoning as the heartbeat
+                # hook: there is no "next sync" to catch a skipped seat.
+                pod=""
+                for w in $(seq 1 "$WAIT_POLLS"); do
+                  pod=$(oc get pods -n "$ns" -l claw.sandbox.redhat.com/instance=instance \
+                         --no-headers 2>/dev/null \
+                        | grep '^instance-' | grep -v proxy | grep -v pairing \
+                        | awk '$3=="Running"{print $1}' | head -1 || true)
+                  [ -n "$pod" ] && break
+                  [ "$w" = "1" ] && echo "  $ns: waiting for the gateway pod"
+                  sleep 15
+                done
+                [ -z "$pod" ] && { echo "  $ns: no running gateway pod after waiting"; return 1; }
 
                 oc exec "$pod" -n "$ns" -c gateway -- mkdir -p "$WS" "$MAIN" >/dev/null 2>&1 || true
 

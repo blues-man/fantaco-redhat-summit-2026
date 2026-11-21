@@ -104,6 +104,8 @@ spec:
               value: {{ .Values.seats.namespacePrefix | quote }}
             - name: HOME_DIR
               value: {{ .Values.paths.home | quote }}
+            - name: WAIT_POLLS
+              value: {{ .Values.paths.gatewayWaitPolls | quote }}
           command:
             - /bin/bash
             - -c
@@ -124,10 +126,24 @@ spec:
                 if ! oc get deploy instance -n "$ns" >/dev/null 2>&1; then
                   skipped=$((skipped+1)); continue
                 fi
-                ready=$(oc get deploy instance -n "$ns" -o jsonpath='{.status.readyReplicas}' 2>/dev/null || true)
+                # WAIT for the gateway rather than skipping on the first
+                # look. A PostSync hook only runs when a sync happens, so
+                # "skip, the next sync will catch it" is wishful -- on a
+                # Synced application there is no next sync. Being patient
+                # here is the difference between converging and needing a
+                # human to re-sync. On a cold cluster the gateway appears
+                # minutes after this hook starts, and it cannot start at
+                # all until seat-keys has minted its credential.
+                ready=""
+                for w in $(seq 1 "$WAIT_POLLS"); do
+                  ready=$(oc get deploy instance -n "$ns" -o jsonpath='{.status.readyReplicas}' 2>/dev/null || true)
+                  if [ "${ready:-0}" -ge 1 ] 2>/dev/null; then break; fi
+                  [ "$w" = "1" ] && echo "  $ns: waiting for the gateway"
+                  sleep 15
+                done
                 if [ "${ready:-0}" -lt 1 ] 2>/dev/null; then
-                  echo "  $ns: gateway not ready yet, skipping"
-                  skipped=$((skipped+1)); continue
+                  echo "  $ns: gateway never became ready"
+                  FAILED+=("$n"); continue
                 fi
 
                 if oc exec deployment/instance -n "$ns" -c gateway -- node -e '

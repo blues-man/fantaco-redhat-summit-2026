@@ -45,3 +45,8 @@ skills:
 # Where the gateway keeps its workspace inside the pod.
 paths:
   home: "/home/node/.openclaw"
+  # How long to wait for a seat's gateway, in 15s polls. 40 = 10 min.
+  # Patience matters more than it looks: a PostSync hook only runs when
+  # a sync happens, so a seat skipped for "not ready yet" is not picked
+  # up later -- there is no next sync on a Synced application.
+  gatewayWaitPolls: 40
