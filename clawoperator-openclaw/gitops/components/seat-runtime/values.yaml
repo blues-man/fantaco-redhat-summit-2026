@@ -35,6 +35,12 @@ skills:
   # belong to different demos.
   names:
     - quote-builder
+  # Paths INSIDE the repo archive. They are not both at the root:
+  # claw_skills/ is, workspace-templates/ is under clawoperator-openclaw/.
+  # Assuming otherwise produced "workspace-templates missing from the
+  # archive" while the URL was perfectly correct.
+  templatesPath: "clawoperator-openclaw/workspace-templates"
+  skillsPath: "claw_skills"
 
 # Where the gateway keeps its workspace inside the pod.
 paths:

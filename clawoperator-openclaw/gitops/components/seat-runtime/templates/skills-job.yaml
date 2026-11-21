@@ -117,6 +117,11 @@ spec:
           volumeMounts:
             - name: content
               mountPath: /content
+          env:
+            - name: TEMPLATES_PATH
+              value: {{ .Values.skills.templatesPath | quote }}
+            - name: SKILLS_PATH
+              value: {{ .Values.skills.skillsPath | quote }}
           command:
             - /bin/bash
             - -c
@@ -130,12 +135,19 @@ spec:
                 exit 1
               fi
               tar xzf /tmp/repo.tgz -C /content --strip-components=1 || exit 1
-              for p in workspace-templates claw_skills; do
+              # The two are NOT both at the repo root, which is what the
+              # first version assumed: claw_skills/ is, workspace-templates/
+              # lives under clawoperator-openclaw/. Both paths are values
+              # so neither is guessed.
+              for p in "$TEMPLATES_PATH" "$SKILLS_PATH"; do
                 if [ ! -d "/content/$p" ]; then
-                  echo "ERROR: $p missing from the archive" >&2; exit 1
+                  echo "ERROR: $p is not in the archive." >&2
+                  echo "Present at the archive root:" >&2
+                  ls /content | head -20 >&2
+                  exit 1
                 fi
               done
-              echo "content ready: $(du -sh /content/workspace-templates /content/claw_skills | tr '\n' ' ')"
+              echo "content ready: $(du -sh "/content/$TEMPLATES_PATH" "/content/$SKILLS_PATH" | tr '\n' ' ')"
           resources:
             requests: {cpu: 20m, memory: 96Mi}
             limits: {cpu: "1", memory: 512Mi}
@@ -154,14 +166,18 @@ spec:
               value: {{ .Values.paths.home | quote }}
             - name: SKILL_LIST
               value: {{ join " " .Values.skills.names | quote }}
+            - name: TEMPLATES_PATH
+              value: {{ .Values.skills.templatesPath | quote }}
+            - name: SKILLS_PATH
+              value: {{ .Values.skills.skillsPath | quote }}
           command:
             - /bin/bash
             - -c
             - |
               set -uo pipefail   # not -e: count, never abort on one seat
 
-              TPL=/content/workspace-templates
-              SK=/content/claw_skills
+              TPL="/content/${TEMPLATES_PATH}"
+              SK="/content/${SKILLS_PATH}"
               WS="${HOME_DIR}/workspace"
               MAIN="${HOME_DIR}/workspace/main"
 
