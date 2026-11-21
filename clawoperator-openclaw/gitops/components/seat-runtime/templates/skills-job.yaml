@@ -27,7 +27,15 @@ pieces it reuses are proven (exec/cp from the heartbeat hook, counting
 and retry from seat-keys), but the archive fetch and the AGENTS.md
 append are new. Expect to debug the first run.
 */}}
-{{- $repoArchive := printf "%s/archive/%s.tar.gz" (trimSuffix ".git" .Values.skills.repoUrl) .Values.skills.revision }}
+{{/*
+refs/heads/ is REQUIRED, not optional tidiness. A branch name
+containing a slash -- feat/gitops-openclaw-demo -- makes
+/archive/<branch>.tar.gz ambiguous, and GitHub serves something that
+is not the archive. The symptom is not a 404: tar succeeds and the
+content is simply absent, so the job reports
+"workspace-templates missing from the archive".
+*/}}
+{{- $repoArchive := printf "%s/archive/refs/heads/%s.tar.gz" (trimSuffix ".git" .Values.skills.repoUrl) .Values.skills.revision }}
 ---
 apiVersion: v1
 kind: ServiceAccount

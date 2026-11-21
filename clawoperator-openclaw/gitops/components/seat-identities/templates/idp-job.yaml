@@ -13,6 +13,17 @@ The htpasswd hash is also generated here rather than templated. Sprig's
 would show as OutOfSync forever and selfHeal would rewrite it on every
 poll. Generating once, in a Job, has no drift.
 
+WHERE THIS RUNS, AND WHY NOT IN openshift-config. The htpasswd Secret
+must live in openshift-config because that is where the OAuth CR reads
+fileData from -- but the JOB must not. openshift-config carries a
+default-deny-all NetworkPolicy, so a pod there cannot reach
+172.30.0.1:443 and every oc call times out. On s4p7f this job hashed
+its identities and then died on the first apply with
+"unable to recognize STDIN: dial tcp 172.30.0.1:443: i/o timeout",
+which reads like a broken cluster rather than a blocked pod. It runs
+in jobNamespace instead and writes the Secret across with
+cluster-scoped RBAC.
+
 ROSA HCP NOTE: oauth/cluster is immutable from inside a hosted cluster —
 a ValidatingAdmissionPolicy rejects the write and tells you to modify
 the HostedCluster instead. The Job detects controlPlaneTopology=External
@@ -26,7 +37,7 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: seat-identities
-  namespace: openshift-config
+  namespace: {{ .Values.identities.jobNamespace }}
   annotations:
     argocd.argoproj.io/hook: PostSync
     argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
@@ -67,13 +78,13 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: seat-identities
-    namespace: openshift-config
+    namespace: {{ .Values.identities.jobNamespace }}
 ---
 apiVersion: batch/v1
 kind: Job
 metadata:
   name: seat-identities
-  namespace: openshift-config
+  namespace: {{ .Values.identities.jobNamespace }}
   annotations:
     argocd.argoproj.io/hook: PostSync
     argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
@@ -193,7 +204,7 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: seat-identities-password
-  namespace: openshift-config
+  namespace: {{ .Values.identities.jobNamespace }}
   annotations:
     argocd.argoproj.io/hook: PostSync
     argocd.argoproj.io/hook-delete-policy: BeforeHookCreation

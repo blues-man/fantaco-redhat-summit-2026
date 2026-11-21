@@ -4,6 +4,11 @@ seats:
   userPrefix: "agentic-user"
 
 identities:
+  # Where the JOB runs. Not openshift-config: that namespace has a
+  # default-deny-all NetworkPolicy and a pod there cannot reach the
+  # API. The htpasswd Secret is still written INTO openshift-config,
+  # because that is where the OAuth CR reads it from.
+  jobNamespace: "models-as-a-service"
   idpName: "seat-users"
   secretName: "htpass-seat-users"
 
