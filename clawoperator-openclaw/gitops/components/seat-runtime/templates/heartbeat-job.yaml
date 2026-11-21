@@ -43,6 +43,14 @@ metadata:
     argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
     argocd.argoproj.io/sync-wave: "0"
 rules:
+  # namespaces, because the first guard in the script is
+  # `oc get namespace`. Leaving it out does not error visibly -- the
+  # guard just fails, every seat is "skipped", and the job reports
+  # success having done nothing. That is exactly what happened on the
+  # first run: muzzled=0 skipped=1.
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list"]
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list"]
