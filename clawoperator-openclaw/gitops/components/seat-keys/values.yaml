@@ -1,0 +1,32 @@
+seats:
+  count: 1
+  namespacePrefix: "agentic-user"
+  userPrefix: "agentic-user"
+
+maas:
+  gatewayHost: ""
+  model: ""
+  keySecretName: "litellm-api-key"
+  # The tenant maximum; /v1/api-keys/config reports it.
+  keyExpirationDays: 90
+
+keys:
+  # Mint AS each seat rather than as this Job's ServiceAccount.
+  #
+  # Worth understanding before turning it off. The `user` dimension in
+  # authorized_hits_total records WHO MINTED THE KEY, not who called it.
+  # Minted by one identity, all seats collapse into a single row in the
+  # MaaS Usage dashboard and per-seat token quota is impossible. Minting
+  # as the seat is the only thing that fixes it.
+  #
+  # Requires components.seatIdentities enabled, because it logs in as
+  # agentic-user<N> with the shared password. If that is off, this falls
+  # back to minting as the Job's SA and says so in the log -- it does not
+  # silently produce keys attributed to the wrong identity.
+  asSeat: true
+  seatPassword: ""
+
+  # Wait for the chain before minting. A key minted before the
+  # MaaSModelRef is Ready and the AuthPolicy Enforced may issue fine and
+  # fail on first inference.
+  waitMinutes: 20

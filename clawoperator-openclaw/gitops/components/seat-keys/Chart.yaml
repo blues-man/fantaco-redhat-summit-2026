@@ -1,0 +1,8 @@
+apiVersion: v2
+name: seat-keys
+description: >-
+  Mints one MaaS API key per seat and writes it into that seat's
+  litellm-api-key secret. The declarative-ish form of
+  maas-mint-seat-keys.sh --apply / --as-seat.
+type: application
+version: 0.1.0

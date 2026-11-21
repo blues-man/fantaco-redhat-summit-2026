@@ -398,6 +398,18 @@ components:
     # GUID. See components/seat-identities/values.yaml before using.
     sharedPassword: ""
 
+  # Mint a MaaS key per seat and write it into litellm-api-key.
+  #
+  # This is what made the demo non-functional out of the box: without a
+  # key the Claw sits at CredentialsResolved=False. The Job is
+  # create-if-absent, so it never overwrites a live key, and it waits
+  # for the chain before minting. Wave 17, after the seats exist.
+  seatKeys:
+    enabled: true
+    # Mint AS each seat so MaaS usage is attributable per seat rather
+    # than collapsing into one cluster-admin row. Needs seatIdentities.
+    asSeat: true
+
   # The seat ApplicationSets. Wave 10.
   seats:
     enabled: true

@@ -541,6 +541,49 @@ spec:
       selfHeal: true
 {{- end }}
 
+{{- if .Values.components.seatKeys.enabled }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{ .Release.Name }}-seat-keys
+  namespace: {{ .Values.argocd.namespace }}
+  labels:
+    {{- include "openclaw.labels" . | nindent 4 }}
+  annotations:
+    # After the seats and after seat-identities, whose shared password
+    # this needs in order to mint as each seat.
+    argocd.argoproj.io/sync-wave: "17"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: {{ .Values.argocd.project }}
+  source:
+    repoURL: {{ include "openclaw.repoURL" . }}
+    targetRevision: {{ include "openclaw.revision" . }}
+    path: {{ include "openclaw.basePath" . }}/components/seat-keys
+    helm:
+      valuesObject:
+        seats:
+          count: {{ include "openclaw.seatCount" . }}
+          namespacePrefix: {{ .Values.seats.namespacePrefix }}
+          userPrefix: {{ .Values.seats.userPrefix }}
+        maas:
+          gatewayHost: {{ include "openclaw.maasGatewayHost" . | quote }}
+          model: {{ include "openclaw.maasModel" . | quote }}
+          tenantNamespace: {{ .Values.maas.tenantNamespace }}
+        keys:
+          asSeat: {{ and .Values.components.seatKeys.asSeat .Values.components.seatIdentities.enabled }}
+          seatPassword: {{ if .Values.components.seatIdentities.enabled }}{{ .Values.components.seatIdentities.sharedPassword | default (printf "%s-seats-v1" (include "openclaw.guid" .) | sha256sum | trunc 12) | quote }}{{ else }}""{{ end }}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ .Values.maas.tenantNamespace }}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+{{- end }}
+
 {{- if .Values.components.broker.enabled }}
 ---
 # Plain-manifest Application: the broker manifests already exist as YAML

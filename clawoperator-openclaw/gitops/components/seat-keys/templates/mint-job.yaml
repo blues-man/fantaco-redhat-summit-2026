@@ -1,0 +1,272 @@
+{{/*
+Mint one MaaS key per seat.
+
+This is the step that made the demo non-functional out of the box: a
+Claw whose litellm-api-key secret does not exist sits at
+CredentialsResolved=False and no seat can infer. It cannot be a
+templated resource -- sk-oai-… keys do not exist until the MaaS chain
+is Ready, so there is no value to template -- but that only rules out
+a Secret in git, not automation. This is the Job that does it.
+
+THE THREE THINGS THAT MAKE THIS SAFE, all of which it would be easy to
+get wrong in a way that is worse than the manual step:
+
+1. CREATE-IF-ABSENT, NEVER OVERWRITE. With selfHeal on, a hook can run
+   every few minutes. A mint-on-every-sync loop would hand each seat a
+   fresh key continuously and invalidate the one its gateway is
+   holding. Every seat with an existing secret is skipped, untouched.
+
+2. IT WAITS FOR THE CHAIN. A key minted before the MaaSModelRef is
+   Ready and the gateway AuthPolicy is Enforced can issue successfully
+   and then fail on the first real inference -- the single worst
+   failure mode in this stack, because everything reads healthy.
+
+3. IT REFUSES TO MINT AS THE WRONG IDENTITY when asSeat is requested.
+   The `user` dimension in authorized_hits_total records who MINTED a
+   key, not who called it, so minting as this Job's ServiceAccount
+   collapses every seat into one row and makes per-seat quota
+   impossible. If the seat login fails, that seat is skipped and
+   reported -- silently falling back to the SA would produce exactly
+   the bug asSeat exists to fix, and nothing downstream would reveal it.
+
+Counting, not exit codes: the Job reports minted/skipped/failed, retries
+failures once, and only then fails -- naming the seats.
+*/}}
+{{- $gw := printf "https://%s" .Values.maas.gatewayHost }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: seat-keys
+  namespace: {{ .Values.maas.tenantNamespace | default "models-as-a-service" }}
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "0"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: seat-keys
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "0"
+rules:
+  # Cluster-scoped: it writes one Secret per seat namespace. list is
+  # included deliberately -- a get-only role makes `oc get -A` style
+  # calls fail, and a denied call inside a `set -e` script is fatal
+  # rather than merely unhelpful. That cost an afternoon on w5xfc.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "create"]
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list"]
+  - apiGroups: ["maas.opendatahub.io"]
+    resources: ["maasmodelrefs"]
+    verbs: ["get", "list"]
+  - apiGroups: ["kuadrant.io"]
+    resources: ["authpolicies"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: seat-keys
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "0"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: seat-keys
+subjects:
+  - kind: ServiceAccount
+    name: seat-keys
+    namespace: {{ .Values.maas.tenantNamespace | default "models-as-a-service" }}
+{{- if .Values.keys.seatPassword }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: seat-keys-login
+  namespace: {{ .Values.maas.tenantNamespace | default "models-as-a-service" }}
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "0"
+type: Opaque
+stringData:
+  password: {{ .Values.keys.seatPassword | quote }}
+{{- end }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: seat-keys
+  namespace: {{ .Values.maas.tenantNamespace | default "models-as-a-service" }}
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  backoffLimit: 2
+  # Keep finished pods around. Debugging a hook whose pod has already
+  # been garbage-collected is miserable, and this one handles secrets.
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      serviceAccountName: seat-keys
+      restartPolicy: Never
+      containers:
+        - name: mint
+          image: image-registry.openshift-image-registry.svc:5000/openshift/cli:latest
+          env:
+            - name: MAAS
+              value: {{ $gw | quote }}
+            - name: SEAT_COUNT
+              value: {{ .Values.seats.count | quote }}
+            - name: NS_PREFIX
+              value: {{ .Values.seats.namespacePrefix | quote }}
+            - name: USER_PREFIX
+              value: {{ .Values.seats.userPrefix | quote }}
+            - name: SECRET_NAME
+              value: {{ .Values.maas.keySecretName | quote }}
+            - name: EXP_DAYS
+              value: {{ .Values.maas.keyExpirationDays | quote }}
+            - name: AS_SEAT
+              value: {{ .Values.keys.asSeat | quote }}
+            - name: WAIT_MIN
+              value: {{ .Values.keys.waitMinutes | quote }}
+            - name: MODEL
+              value: {{ .Values.maas.model | quote }}
+{{- if .Values.keys.seatPassword }}
+            - name: SEAT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: seat-keys-login
+                  key: password
+{{- end }}
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -uo pipefail   # NOT -e: see the note on counting below.
+
+              SA_TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+
+              # ---- 1. wait for the chain -------------------------------
+              polls=$(( WAIT_MIN * 4 ))
+              ready=0
+              for i in $(seq 1 "$polls"); do
+                m=$(oc get maasmodelref "$MODEL" -n models-as-a-service \
+                      -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)
+                a=$(oc get authpolicy -A --no-headers 2>/dev/null \
+                      | grep -c . || true)
+                if [ "$m" = "True" ]; then ready=1; break; fi
+                echo "waiting for MaaSModelRef/$MODEL to be Ready (now ${m:-unset}, $i/$polls)"
+                sleep 15
+              done
+              if [ "$ready" != "1" ]; then
+                echo "ERROR: MaaSModelRef $MODEL never reached Ready; refusing to mint." >&2
+                echo "A key minted now can issue fine and fail on first inference." >&2
+                exit 1
+              fi
+              echo "chain Ready; minting against $MAAS"
+
+              # ---- 2. mint per seat ------------------------------------
+              mint() {   # $1 = key name, $2 = bearer token
+                curl -sk -m 45 -X POST "${MAAS}/v1/api-keys" \
+                  -H "Authorization: Bearer ${2}" \
+                  -H 'Content-Type: application/json' \
+                  -d "$(printf '{"name":"%s","description":"FantaCo demo seat key","expiration":"%sd"}' "$1" "$EXP_DAYS")" \
+                  2>/dev/null \
+                | python3 -I -c "
+              import json,sys
+              raw=sys.stdin.read()
+              try: d=json.loads(raw)
+              except Exception:
+                  sys.stderr.write('unparseable response: '+raw[:200]+'\n'); sys.exit(1)
+              # the field name has moved between RHOAI builds
+              for f in ('api_key','apiKey','key','token','secret'):
+                  v=d.get(f)
+                  if isinstance(v,str) and v.startswith('sk-'):
+                      print(v); sys.exit(0)
+              sys.stderr.write('no sk- key in response: '+json.dumps(d)[:200]+'\n'); sys.exit(1)
+              "
+              }
+
+              seat_token() {   # $1 = username
+                local kc; kc=$(mktemp)
+                if KUBECONFIG="$kc" oc login --insecure-skip-tls-verify=true \
+                     "$(oc whoami --show-server)" -u "$1" -p "$SEAT_PASSWORD" >/dev/null 2>&1; then
+                  KUBECONFIG="$kc" oc whoami -t 2>/dev/null
+                  rm -f "$kc"; return 0
+                fi
+                rm -f "$kc"; return 1
+              }
+
+              minted=0; skipped=0; declare -a FAILED=()
+
+              do_seat() {
+                local n="$1" ns user tok key
+                ns="${NS_PREFIX}${n}"; user="${USER_PREFIX}${n}"
+
+                # CREATE-IF-ABSENT. Never overwrite a live key.
+                if oc get secret "$SECRET_NAME" -n "$ns" >/dev/null 2>&1; then
+                  skipped=$((skipped+1)); return 0
+                fi
+                oc get namespace "$ns" >/dev/null 2>&1 || { echo "  $ns: no namespace, skipping"; return 0; }
+
+                tok="$SA_TOKEN"
+                if [ "$AS_SEAT" = "true" ]; then
+                  if [ -z "${SEAT_PASSWORD:-}" ]; then
+                    echo "  $ns: asSeat requested but no seat password supplied."
+                    echo "        Enable components.seatIdentities, or set keys.asSeat=false"
+                    echo "        to accept cluster-admin attribution deliberately."
+                    return 1
+                  fi
+                  if ! tok=$(seat_token "$user"); then
+                    # Deliberately NOT falling back to the SA token.
+                    echo "  $ns: could not log in as $user — not minting as the SA,"
+                    echo "        which would silently mis-attribute this seat's usage."
+                    return 1
+                  fi
+                fi
+
+                if ! key=$(mint "$ns" "$tok"); then
+                  echo "  $ns: mint failed"; return 1
+                fi
+                if ! printf '%s' "$key" | oc create secret generic "$SECRET_NAME" \
+                      -n "$ns" --from-file=api-key=/dev/stdin >/dev/null 2>&1; then
+                  echo "  $ns: minted but could not write the secret"; return 1
+                fi
+                minted=$((minted+1))
+                return 0
+              }
+
+              for n in $(seq 1 "$SEAT_COUNT"); do
+                do_seat "$n" || FAILED+=("$n")
+              done
+
+              # One retry for the failures. At fleet scale a couple of
+              # seats always lose a race; a blanket re-run would be a
+              # churn risk, retrying only the misses is not.
+              if [ "${#FAILED[@]}" -gt 0 ]; then
+                echo "retrying ${#FAILED[@]} seat(s): ${FAILED[*]}"
+                declare -a STILL=()
+                for n in "${FAILED[@]}"; do do_seat "$n" || STILL+=("$n"); done
+                FAILED=("${STILL[@]:-}")
+              fi
+
+              echo "minted=$minted skipped=$skipped failed=${#FAILED[@]}"
+              if [ "${#FAILED[@]}" -gt 0 ] && [ -n "${FAILED[0]:-}" ]; then
+                echo "ERROR: seats still without a key: ${FAILED[*]}" >&2
+                exit 1
+              fi
+              echo "every seat has a key"
+          resources:
+            requests: {cpu: 20m, memory: 96Mi}
+            limits: {cpu: "1", memory: 512Mi}
