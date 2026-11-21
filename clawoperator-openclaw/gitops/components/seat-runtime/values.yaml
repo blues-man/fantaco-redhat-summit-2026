@@ -25,6 +25,16 @@ skills:
   # /quote was missing. So this VERIFIES after writing and retries,
   # rather than trusting that the write happened.
   inject: true
+  # Where the content comes from. It lives at the repo ROOT
+  # (workspace-templates/, claw_skills/), outside this chart, so Helm
+  # cannot read it -- the Job fetches the repo archive at the revision
+  # Argo is syncing. One canonical copy, no drift.
+  repoUrl: "https://github.com/blues-man/fantaco-redhat-summit-2026"
+  revision: "main"
+  # Only quote-builder is seeded today; claw_skills/ holds others that
+  # belong to different demos.
+  names:
+    - quote-builder
 
 # Where the gateway keeps its workspace inside the pod.
 paths:

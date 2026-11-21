@@ -420,8 +420,17 @@ components:
     # file ARMS the heartbeat (~40k tokens per poll per seat); a
     # present, comments-only file disables it.
     muzzleHeartbeat: true
-    # Not yet implemented as a hook -- still 6-inject-enterprise-skills.sh.
+    # Seed the enterprise skills. The content is fetched from the repo
+    # archive at the revision Argo is syncing, because it lives at the
+    # repo root rather than in this chart.
+    #
+    # OFF until it has run against a cluster once. Everything it reuses
+    # is proven, but the archive fetch and the verify-in-main/ check
+    # are new, and an untested hook that fails marks the Application
+    # Degraded.
     injectSkills: false
+    skillNames:
+      - quote-builder
 
   # The seat ApplicationSets. Wave 10.
   seats:

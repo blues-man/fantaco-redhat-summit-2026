@@ -1,0 +1,228 @@
+{{- if .Values.skills.inject }}
+{{/*
+Seed the enterprise skills and workspace templates into every seat.
+
+WHERE THE CONTENT COMES FROM, and why not from the chart. The files
+live in workspace-templates/ and claw_skills/ at the repository root,
+outside this chart directory, so Helm cannot read them. The three
+options were: copy them into the chart (24K of markdown duplicated,
+and this repo's own rule is that a thing recorded in two places is
+worse than one, because the copies drift); a git-clone initContainer
+(a whole binary for one tarball); or fetch the repo archive at the
+revision Argo is already using. The third keeps one canonical copy and
+inherits the branch automatically.
+
+WHY IT VERIFIES RATHER THAN TRUSTING. Copying into a running pod lands
+unreliably at fleet scale: ~2.5% of seats silently miss the skill, and
+on 2026-11-10 the presenter's own seat was one of them, found live on
+stage when /quote was missing. `oc cp` has been seen to report success
+while leaving the file absent. So every seat is checked by listing the
+LIVE main/ tree afterwards, and misses are retried.
+
+Presence in workspace/ proves nothing on its own -- the agent reads
+main/. Both trees are written, and only main/ is counted.
+
+UNVERIFIED AS OF WRITING: this has not run against a cluster. The
+pieces it reuses are proven (exec/cp from the heartbeat hook, counting
+and retry from seat-keys), but the archive fetch and the AGENTS.md
+append are new. Expect to debug the first run.
+*/}}
+{{- $repoArchive := printf "%s/archive/%s.tar.gz" (trimSuffix ".git" .Values.skills.repoUrl) .Values.skills.revision }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: seat-skills
+  namespace: {{ .Values.seats.namespacePrefix }}1
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "0"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: seat-skills
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "0"
+rules:
+  # namespaces included deliberately: the script's first guard is
+  # `oc get namespace`, and a denied guard is indistinguishable from an
+  # absent namespace -- which made the heartbeat hook report success
+  # having skipped every seat.
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: seat-skills
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "0"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: seat-skills
+subjects:
+  - kind: ServiceAccount
+    name: seat-skills
+    namespace: {{ .Values.seats.namespacePrefix }}1
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: seat-skills
+  namespace: {{ .Values.seats.namespacePrefix }}1
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      serviceAccountName: seat-skills
+      restartPolicy: Never
+      volumes:
+        - name: content
+          emptyDir: {}
+      initContainers:
+        # Fetch the repo archive at the revision Argo is syncing, so the
+        # skills always match the chart that deployed them.
+        - name: fetch
+          image: image-registry.openshift-image-registry.svc:5000/openshift/cli:latest
+          volumeMounts:
+            - name: content
+              mountPath: /content
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -uo pipefail
+              echo "fetching {{ $repoArchive }}"
+              if ! curl -sSL --max-time 120 -o /tmp/repo.tgz "{{ $repoArchive }}"; then
+                echo "ERROR: could not fetch the repo archive." >&2
+                echo "The seat content lives at the repo root, not in the chart;" >&2
+                echo "this needs egress to the git host, or a private repo token." >&2
+                exit 1
+              fi
+              tar xzf /tmp/repo.tgz -C /content --strip-components=1 || exit 1
+              for p in workspace-templates claw_skills; do
+                if [ ! -d "/content/$p" ]; then
+                  echo "ERROR: $p missing from the archive" >&2; exit 1
+                fi
+              done
+              echo "content ready: $(du -sh /content/workspace-templates /content/claw_skills | tr '\n' ' ')"
+          resources:
+            requests: {cpu: 20m, memory: 96Mi}
+            limits: {cpu: "1", memory: 512Mi}
+      containers:
+        - name: inject
+          image: image-registry.openshift-image-registry.svc:5000/openshift/cli:latest
+          volumeMounts:
+            - name: content
+              mountPath: /content
+          env:
+            - name: SEAT_COUNT
+              value: {{ .Values.seats.count | quote }}
+            - name: NS_PREFIX
+              value: {{ .Values.seats.namespacePrefix | quote }}
+            - name: HOME_DIR
+              value: {{ .Values.paths.home | quote }}
+            - name: SKILL_LIST
+              value: {{ join " " .Values.skills.names | quote }}
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -uo pipefail   # not -e: count, never abort on one seat
+
+              TPL=/content/workspace-templates
+              SK=/content/claw_skills
+              WS="${HOME_DIR}/workspace"
+              MAIN="${HOME_DIR}/workspace/main"
+
+              inject_seat() {
+                local ns="$1" pod ok=1
+
+                # oc cp needs a pod name, not a deployment.
+                pod=$(oc get pods -n "$ns" -l claw.sandbox.redhat.com/instance=instance \
+                       --no-headers 2>/dev/null \
+                      | grep '^instance-' | grep -v proxy | grep -v pairing \
+                      | awk '$3=="Running"{print $1}' | head -1 || true)
+                [ -z "$pod" ] && { echo "  $ns: no running gateway pod"; return 1; }
+
+                oc exec "$pod" -n "$ns" -c gateway -- mkdir -p "$WS" "$MAIN" >/dev/null 2>&1 || true
+
+                for f in IDENTITY.md TOOLS.md SOUL.md; do
+                  [ -f "$TPL/$f" ] || continue
+                  oc cp "$TPL/$f" "$pod:$WS/$f" -n "$ns" -c gateway >/dev/null 2>&1 || ok=0
+                done
+
+                for s in $SKILL_LIST; do
+                  [ -f "$SK/$s/SKILL.md" ] || { echo "  $ns: $s not in the archive"; ok=0; continue; }
+                  oc exec "$pod" -n "$ns" -c gateway -- mkdir -p "$WS/skills/$s" "$MAIN/skills/$s" >/dev/null 2>&1 || true
+                  if oc cp "$SK/$s/SKILL.md" "$pod:$WS/skills/$s/SKILL.md" -n "$ns" -c gateway >/dev/null 2>&1; then
+                    # main/ is the tree the agent actually reads.
+                    oc exec "$pod" -n "$ns" -c gateway -- \
+                      cp "$WS/skills/$s/SKILL.md" "$MAIN/skills/$s/SKILL.md" >/dev/null 2>&1 || ok=0
+                  else
+                    ok=0
+                  fi
+                done
+
+                # VERIFY against the LIVE tree. oc cp has been seen to
+                # report success while leaving the file absent, and
+                # presence in workspace/ proves nothing -- the agent
+                # reads main/.
+                for s in $SKILL_LIST; do
+                  oc exec "$pod" -n "$ns" -c gateway -- \
+                    test -s "$MAIN/skills/$s/SKILL.md" >/dev/null 2>&1 \
+                    || { echo "  $ns: $s not present in main/ after copy"; ok=0; }
+                done
+
+                [ "$ok" = "1" ]
+              }
+
+              done_=0; skipped=0; declare -a FAILED=()
+              for n in $(seq 1 "$SEAT_COUNT"); do
+                ns="${NS_PREFIX}${n}"
+                if ! oc get namespace "$ns" >/dev/null 2>&1; then
+                  echo "  $ns: namespace not found or not readable"; skipped=$((skipped+1)); continue
+                fi
+                if inject_seat "$ns"; then done_=$((done_+1)); else FAILED+=("$n"); fi
+              done
+
+              if [ "${#FAILED[@]}" -gt 0 ] && [ -n "${FAILED[0]:-}" ]; then
+                echo "retrying ${#FAILED[@]} seat(s): ${FAILED[*]}"
+                declare -a STILL=()
+                for n in "${FAILED[@]}"; do
+                  inject_seat "${NS_PREFIX}${n}" && done_=$((done_+1)) || STILL+=("$n")
+                done
+                FAILED=("${STILL[@]:-}")
+              fi
+
+              echo "injected=$done_ skipped=$skipped failed=${#FAILED[@]} of $SEAT_COUNT"
+              if [ "${#FAILED[@]}" -gt 0 ] && [ -n "${FAILED[0]:-}" ]; then
+                echo "ERROR: seats without skills: ${FAILED[*]}" >&2
+                exit 1
+              fi
+          resources:
+            requests: {cpu: 20m, memory: 96Mi}
+            limits: {cpu: "1", memory: 512Mi}
+{{- end }}

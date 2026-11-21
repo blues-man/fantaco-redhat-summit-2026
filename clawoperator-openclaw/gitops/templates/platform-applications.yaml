@@ -614,6 +614,9 @@ spec:
           muzzle: {{ .Values.components.seatRuntime.muzzleHeartbeat }}
         skills:
           inject: {{ .Values.components.seatRuntime.injectSkills }}
+          repoUrl: {{ include "openclaw.repoURL" . | trimSuffix ".git" | quote }}
+          revision: {{ include "openclaw.revision" . | quote }}
+          names: {{ .Values.components.seatRuntime.skillNames | toJson }}
   destination:
     server: https://kubernetes.default.svc
     namespace: {{ printf "%s1" .Values.seats.namespacePrefix }}
