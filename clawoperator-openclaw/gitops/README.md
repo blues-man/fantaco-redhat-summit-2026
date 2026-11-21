@@ -295,3 +295,62 @@ The same rule as the rest of this repository: a convention recorded in one
 place is worse than one recorded nowhere. If you change a behaviour here
 that [`HANDOFF.md`](../HANDOFF.md) or [`QUICKSTART.md`](../QUICKSTART.md)
 also documents, change it there in the same edit.
+
+## Seat identities: two shapes, one password
+
+Who the attendees log in as, and who the seats are bound to, is one
+decision with two supported answers. Both need the chart to KNOW the
+password, because minting a MaaS key as the seat means logging in as
+that seat — and that is what makes usage attributable per seat instead
+of collapsing into a single `user="cluster-admin"` row.
+
+**RHDP users — the long-term shape.** The order form already creates
+`user1…userN` in Keycloak. Set the password you chose for them and
+point the seats at that prefix:
+
+```yaml
+seats:
+  userPrefix: "user"
+  password: "<the password you set on the order>"
+components:
+  seatIdentities:
+    enabled: false        # nothing to create; RHDP already did
+```
+
+One identity set, one login button, no second provider to explain.
+
+**htpasswd — what the chart does by default today.** Used when you do
+not control the order form's user passwords:
+
+```yaml
+seats:
+  userPrefix: "agentic-user"
+  password: ""            # empty derives one from the GUID
+components:
+  seatIdentities:
+    enabled: true
+```
+
+This APPENDS an htpasswd provider to `oauth/cluster` — it never
+replaces the list, because replacing it would delete RHDP's Keycloak
+provider and lock everyone out of the console. Expect two buttons on
+the login page; the htpasswd one owns the seats.
+
+Read a derived password with:
+
+```bash
+oc get secret seat-identities-password -n openshift-config \
+  -o jsonpath='{.data.password}' | base64 -d
+```
+
+**`seats.userPrefix` must match whichever identities actually exist.**
+It is what `claw-user` and namespace `admin` are bound to, and a wrong
+prefix fails silently: the RoleBindings apply cleanly against
+identities that never log in.
+
+**One shared password for every seat** in both shapes. Fine for a
+workshop where it goes on a slide; it means any attendee can log in as
+any other seat, so rotate or tear the cluster down afterwards. For
+genuine per-seat isolation use `../create-seat-users.sh`, which does
+bcrypt with distinct passwords into a gitignored CSV — distributing N
+different secrets is not something a chart can do well.

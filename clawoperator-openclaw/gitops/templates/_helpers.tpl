@@ -150,3 +150,22 @@ to the conservative default for anything not in the table.
 {{- $l := index .Values.maas.modelLimits $m | default .Values.maas.modelLimits.default -}}
 {{- toYaml $l -}}
 {{- end -}}
+
+{{/*
+The one seat password.
+
+seats.password wins; then the legacy
+components.seatIdentities.sharedPassword; then one derived from the
+GUID so a workshop still works without anyone choosing a value.
+Returns "" only if derivation is impossible, which is what makes
+asSeat degrade honestly rather than mint as the wrong identity.
+*/}}
+{{- define "openclaw.seatPassword" -}}
+{{- if .Values.seats.password -}}
+{{- .Values.seats.password -}}
+{{- else if and .Values.components.seatIdentities .Values.components.seatIdentities.sharedPassword -}}
+{{- .Values.components.seatIdentities.sharedPassword -}}
+{{- else -}}
+{{- printf "%s-seats-v1" (include "openclaw.guid" .) | sha256sum | trunc 12 -}}
+{{- end -}}
+{{- end -}}

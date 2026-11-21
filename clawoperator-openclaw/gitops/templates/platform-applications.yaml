@@ -529,7 +529,13 @@ spec:
           namespacePrefix: {{ .Values.seats.namespacePrefix }}
           userPrefix: {{ .Values.seats.userPrefix }}
         identities:
-          sharedPassword: {{ .Values.components.seatIdentities.sharedPassword | quote }}
+          # The SAME resolved password seat-keys will log in with.
+          # Passing the raw value here instead would let the htpasswd
+          # file and the minting login disagree whenever seats.password
+          # is set, and the symptom would be seats silently skipped for
+          # "could not log in" rather than anything pointing at a
+          # password mismatch.
+          sharedPassword: {{ include "openclaw.seatPassword" . | quote }}
         deployer:
           guid: {{ include "openclaw.guid" . | quote }}
   destination:
@@ -573,8 +579,12 @@ spec:
           model: {{ include "openclaw.maasModel" . | quote }}
           tenantNamespace: {{ .Values.maas.tenantNamespace }}
         keys:
-          asSeat: {{ and .Values.components.seatKeys.asSeat .Values.components.seatIdentities.enabled }}
-          seatPassword: {{ if .Values.components.seatIdentities.enabled }}{{ .Values.components.seatIdentities.sharedPassword | default (printf "%s-seats-v1" (include "openclaw.guid" .) | sha256sum | trunc 12) | quote }}{{ else }}""{{ end }}
+          # asSeat needs a PASSWORD, not a particular identity
+          # provider. Whether the seats come from htpasswd or from
+          # RHDP's Keycloak users is irrelevant here -- all that
+          # matters is that the chart can log in as them.
+          asSeat: {{ and .Values.components.seatKeys.asSeat (ne (include "openclaw.seatPassword" .) "") }}
+          seatPassword: {{ include "openclaw.seatPassword" . | quote }}
   destination:
     server: https://kubernetes.default.svc
     namespace: {{ .Values.maas.tenantNamespace }}

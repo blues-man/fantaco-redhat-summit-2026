@@ -124,6 +124,27 @@ seats:
   # on every sync. Pin it if the broker has already issued one.
   audienceCode: ""
 
+  # The seat login password, ONE value for all seats.
+  #
+  # Deliberately independent of which identity provider supplies the
+  # seats, because two different providers can offer the same
+  # credential and the chart only cares that it knows it:
+  #
+  #   RHDP users  (the long-term shape) set userPrefix: user, leave
+  #               seatIdentities off, and put the password you chose
+  #               for the order-form users here.
+  #   htpasswd    (today) set userPrefix: agentic-user and
+  #               seatIdentities.enabled: true; the component mints the
+  #               identities using this password.
+  #
+  # Empty derives one from the GUID. Minting a MaaS key AS the seat
+  # needs this; without any password, asSeat degrades to false and
+  # usage collapses into one cluster-admin row.
+  #
+  # One shared password means any attendee can log in as any other
+  # seat. Right for a workshop, wrong for anything outliving it.
+  password: ""
+
   # List each seat under Projects in the RHOAI dashboard. Needs
   # opendatahub.io/dashboard=true on the namespace; without it a seat is
   # invisible there even with everything running. At fleet scale this
