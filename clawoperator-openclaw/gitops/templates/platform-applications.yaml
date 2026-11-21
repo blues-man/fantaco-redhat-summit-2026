@@ -638,6 +638,46 @@ spec:
       selfHeal: true
 {{- end }}
 
+{{- if .Values.components.brokerBuild.enabled }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{ .Release.Name }}-broker-build
+  namespace: {{ .Values.argocd.namespace }}
+  labels:
+    {{- include "openclaw.labels" . | nindent 4 }}
+  annotations:
+    # Wave 19: late, because the image is only needed at the end and a
+    # buildah run competes with 30 seats coming up.
+    argocd.argoproj.io/sync-wave: "19"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: {{ .Values.argocd.project }}
+  source:
+    repoURL: {{ include "openclaw.repoURL" . }}
+    targetRevision: {{ include "openclaw.revision" . }}
+    path: {{ include "openclaw.basePath" . }}/components/broker-build
+    helm:
+      valuesObject:
+        build:
+          namespace: {{ .Values.components.brokerBuild.namespace }}
+          repoUrl: {{ include "openclaw.repoURL" . | trimSuffix ".git" | quote }}
+          revision: {{ include "openclaw.revision" . | quote }}
+          installOperator: {{ .Values.components.brokerBuild.installOperator }}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ .Values.components.brokerBuild.namespace }}
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - SkipDryRunOnMissingResource=true
+{{- end }}
+
 {{- if .Values.components.broker.enabled }}
 ---
 # Plain-manifest Application: the broker manifests already exist as YAML
@@ -650,7 +690,10 @@ metadata:
   labels:
     {{- include "openclaw.labels" . | nindent 4 }}
   annotations:
-    argocd.argoproj.io/sync-wave: "{{ get $wave "broker" }}"
+    # Wave 20: AFTER broker-build. The image does not exist until
+    # that Pipeline has run, so deploying earlier guarantees an
+    # ImagePullBackOff until it does.
+    argocd.argoproj.io/sync-wave: "20"
   finalizers:
     - resources-finalizer.argocd.argoproj.io
 spec:

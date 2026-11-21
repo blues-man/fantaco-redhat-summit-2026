@@ -1,0 +1,23 @@
+build:
+  namespace: "session-broker"
+
+  # Where the Containerfile and sources are, inside the repo archive.
+  repoUrl: "https://github.com/blues-man/fantaco-redhat-summit-2026"
+  revision: "main"
+  contextPath: "clawoperator-openclaw/broker-pg"
+  containerfile: "Containerfile"
+
+  # Pushed to the cluster's own registry: the broker is built here and
+  # consumed here, so there is nothing to gain from an external one.
+  imageStream: "session-broker"
+  tag: "latest"
+
+  # The OpenShift Pipelines operator. Installed by this chart because a
+  # stock cluster does not have it, and the Pipeline CRDs must exist
+  # before the Pipeline object can be applied.
+  installOperator: true
+  operatorChannel: "latest"
+
+  # How long the hook waits for the build, in 15s polls. 80 = 20 min.
+  # A first build pulls a nodejs base image and runs npm ci.
+  waitPolls: 80

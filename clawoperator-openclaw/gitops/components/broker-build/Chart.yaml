@@ -1,0 +1,8 @@
+apiVersion: v2
+name: broker-build
+description: >-
+  Builds the session-broker image with OpenShift Pipelines, then lets
+  the broker deploy. The Pipeline is declared in git; the PipelineRun
+  is created by a hook, because Argo excludes PipelineRun by default.
+type: application
+version: 0.1.0

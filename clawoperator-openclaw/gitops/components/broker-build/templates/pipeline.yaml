@@ -1,0 +1,142 @@
+{{/*
+The Pipeline, declared in git. The PipelineRun is NOT -- see
+run-job.yaml for why.
+
+Self-contained taskSpec rather than ClusterTask or a bundle resolver.
+ClusterTasks are deprecated and absent on newer Pipelines versions, and
+a bundle resolver needs egress to an OCI registry at run time; inlining
+the steps means this works on whatever version the operator installs.
+*/}}
+{{- if .Values.build.installOperator }}
+---
+# A stock cluster has no Pipelines operator, and the Pipeline object
+# below cannot be applied until its CRD exists. Sync waves order the
+# two; Argo retries the Pipeline until the CRD appears.
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: openshift-pipelines-operator-rh
+  namespace: openshift-operators
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  channel: {{ .Values.build.operatorChannel }}
+  name: openshift-pipelines-operator-rh
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+  installPlanApproval: Automatic
+{{- end }}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.build.namespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  labels:
+    demo.redhat.com/application: "openclaw-on-openshift"
+---
+# The build target. An ImageStream rather than a bare registry path so
+# the Deployment can reference it and so `oc get istag` shows whether a
+# build has ever succeeded.
+apiVersion: image.openshift.io/v1
+kind: ImageStream
+metadata:
+  name: {{ .Values.build.imageStream }}
+  namespace: {{ .Values.build.namespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  lookupPolicy:
+    local: true
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: broker-build
+  namespace: {{ .Values.build.namespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+    # The CRD arrives with the Subscription above.
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  params:
+    - name: archive
+      type: string
+    - name: contextPath
+      type: string
+    - name: containerfile
+      type: string
+    - name: image
+      type: string
+  workspaces:
+    - name: source
+  tasks:
+    - name: fetch
+      workspaces:
+        - name: source
+          workspace: source
+      params:
+        - name: archive
+          value: $(params.archive)
+      taskSpec:
+        params:
+          - name: archive
+            type: string
+        workspaces:
+          - name: source
+        steps:
+          - name: fetch
+            image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+            script: |
+              #!/usr/bin/env bash
+              set -uo pipefail
+              # curl+tar rather than git: no git binary needed, and the
+              # archive pins to the same revision Argo is syncing.
+              microdnf -y install tar gzip >/dev/null 2>&1 || true
+              if ! curl -sSL --max-time 180 -o /tmp/src.tgz "$(params.archive)"; then
+                echo "ERROR: could not fetch $(params.archive)" >&2; exit 1
+              fi
+              tar xzf /tmp/src.tgz -C $(workspaces.source.path) --strip-components=1 || exit 1
+              echo "fetched:"; ls $(workspaces.source.path) | head
+    - name: build
+      runAfter: [fetch]
+      workspaces:
+        - name: source
+          workspace: source
+      params:
+        - name: contextPath
+          value: $(params.contextPath)
+        - name: containerfile
+          value: $(params.containerfile)
+        - name: image
+          value: $(params.image)
+      taskSpec:
+        params:
+          - name: contextPath
+            type: string
+          - name: containerfile
+            type: string
+          - name: image
+            type: string
+        workspaces:
+          - name: source
+        steps:
+          - name: buildah
+            image: registry.redhat.io/rhel9/buildah:latest
+            securityContext:
+              capabilities:
+                add: ["SETFCAP"]
+            script: |
+              #!/usr/bin/env bash
+              set -uo pipefail
+              cd "$(workspaces.source.path)/$(params.contextPath)" || exit 1
+              # vfs, because fuse-overlayfs needs privileges this SA
+              # should not have. Slower, and fine for a one-off build.
+              buildah --storage-driver=vfs bud \
+                --format=oci --tls-verify=false \
+                -f "$(params.containerfile)" -t "$(params.image)" . || exit 1
+              buildah --storage-driver=vfs push --tls-verify=false \
+                "$(params.image)" \
+                "docker://$(params.image)" || exit 1
+              echo "pushed $(params.image)"

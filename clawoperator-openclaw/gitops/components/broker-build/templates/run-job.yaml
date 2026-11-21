@@ -1,0 +1,205 @@
+{{/*
+Create the PipelineRun from a hook, not from git.
+
+WHY. OpenShift GitOps ships a default exclusion:
+
+    - apiGroups: [tekton.dev]
+      kinds: [TaskRun, PipelineRun]
+
+so a PipelineRun committed to git is IGNORED. Not rejected -- ignored.
+Argo renders it, skips it, reports the Application Synced/Healthy, and
+the broker then fails to pull an image nobody built. Confirmed present
+in argocd-cm on this cluster.
+
+The alternatives were removing the exclusion (cluster-wide Argo config,
+fighting a deliberate Red Hat default) or dropping Tekton for a
+BuildConfig. Creating the run from a Job keeps the exclusion intact and
+keeps Pipelines in the story.
+
+It also gives us something a sync wave could not: the Job WAITS for the
+build and fails loudly if it does not succeed, so the broker is not
+deployed against an image that was never pushed.
+
+Idempotent: if the ImageStream tag already exists, no build is started.
+A rebuild is `oc delete istag session-broker:latest` then re-sync.
+*/}}
+{{- $archive := printf "%s/archive/refs/heads/%s.tar.gz" (trimSuffix ".git" .Values.build.repoUrl) .Values.build.revision }}
+{{- $image := printf "image-registry.openshift-image-registry.svc:5000/%s/%s:%s" .Values.build.namespace .Values.build.imageStream .Values.build.tag }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: broker-build-runner
+  namespace: {{ .Values.build.namespace }}
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "0"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: broker-build-runner
+  namespace: {{ .Values.build.namespace }}
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "0"
+rules:
+  - apiGroups: ["tekton.dev"]
+    resources: ["pipelineruns", "pipelines", "taskruns"]
+    verbs: ["get", "list", "create", "watch"]
+  - apiGroups: ["image.openshift.io"]
+    resources: ["imagestreams", "imagestreamtags"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["serviceaccounts"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: broker-build-runner
+  namespace: {{ .Values.build.namespace }}
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "0"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: broker-build-runner
+subjects:
+  - kind: ServiceAccount
+    name: broker-build-runner
+    namespace: {{ .Values.build.namespace }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: broker-build-run
+  namespace: {{ .Values.build.namespace }}
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      serviceAccountName: broker-build-runner
+      restartPolicy: Never
+      containers:
+        - name: run
+          image: image-registry.openshift-image-registry.svc:5000/openshift/cli:latest
+          env:
+            - name: NS
+              value: {{ .Values.build.namespace | quote }}
+            - name: ARCHIVE
+              value: {{ $archive | quote }}
+            - name: CONTEXT_PATH
+              value: {{ .Values.build.contextPath | quote }}
+            - name: CONTAINERFILE
+              value: {{ .Values.build.containerfile | quote }}
+            - name: IMAGE
+              value: {{ $image | quote }}
+            - name: ISTREAM
+              value: {{ .Values.build.imageStream | quote }}
+            - name: TAG
+              value: {{ .Values.build.tag | quote }}
+            - name: WAIT_POLLS
+              value: {{ .Values.build.waitPolls | quote }}
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -uo pipefail
+
+              # Already built? Then nothing to do. Without this the hook
+              # would rebuild on every sync, and selfHeal syncs often.
+              if oc get istag "${ISTREAM}:${TAG}" -n "$NS" >/dev/null 2>&1; then
+                echo "${ISTREAM}:${TAG} already exists; not rebuilding."
+                echo "To force one: oc delete istag ${ISTREAM}:${TAG} -n $NS, then re-sync."
+                exit 0
+              fi
+
+              # The Pipeline comes from git but its CRD comes from an
+              # operator install, so it may not be there on a cold run.
+              for i in $(seq 1 "$WAIT_POLLS"); do
+                if oc get pipeline broker-build -n "$NS" >/dev/null 2>&1; then break; fi
+                [ "$i" = "1" ] && echo "waiting for the broker-build Pipeline (operator installing)"
+                sleep 15
+              done
+              if ! oc get pipeline broker-build -n "$NS" >/dev/null 2>&1; then
+                echo "ERROR: Pipeline broker-build never appeared." >&2
+                echo "Is the OpenShift Pipelines operator installed and its CRDs registered?" >&2
+                exit 1
+              fi
+
+              # The operator creates the 'pipeline' SA per namespace and
+              # binds it to the SCC buildah needs. Running before it
+              # exists fails in a way that reads like an SCC problem.
+              for i in $(seq 1 40); do
+                if oc get sa pipeline -n "$NS" >/dev/null 2>&1; then break; fi
+                [ "$i" = "1" ] && echo "waiting for the pipeline ServiceAccount"
+                sleep 15
+              done
+
+              RUN="broker-build-$(date +%s)"
+              cat <<EOF | oc create -f - || exit 1
+              apiVersion: tekton.dev/v1
+              kind: PipelineRun
+              metadata:
+                name: ${RUN}
+                namespace: ${NS}
+              spec:
+                taskRunTemplate:
+                  serviceAccountName: pipeline
+                pipelineRef:
+                  name: broker-build
+                params:
+                  - name: archive
+                    value: "${ARCHIVE}"
+                  - name: contextPath
+                    value: "${CONTEXT_PATH}"
+                  - name: containerfile
+                    value: "${CONTAINERFILE}"
+                  - name: image
+                    value: "${IMAGE}"
+                workspaces:
+                  - name: source
+                    volumeClaimTemplate:
+                      spec:
+                        accessModes: [ReadWriteOnce]
+                        resources:
+                          requests:
+                            storage: 2Gi
+              EOF
+              echo "started PipelineRun ${RUN}"
+
+              for i in $(seq 1 "$WAIT_POLLS"); do
+                S=$(oc get pipelinerun "$RUN" -n "$NS" \
+                     -o jsonpath='{.status.conditions[?(@.type=="Succeeded")].status}' 2>/dev/null || true)
+                case "$S" in
+                  True)  echo "build succeeded"
+                         oc get istag "${ISTREAM}:${TAG}" -n "$NS" >/dev/null 2>&1 \
+                           && { echo "image present: ${ISTREAM}:${TAG}"; exit 0; }
+                         echo "ERROR: run succeeded but no image tag -- did the push target the right registry?" >&2
+                         exit 1 ;;
+                  False) echo "ERROR: PipelineRun ${RUN} failed:" >&2
+                         oc get pipelinerun "$RUN" -n "$NS" \
+                           -o jsonpath='{.status.conditions[?(@.type=="Succeeded")].message}{"\n"}' >&2
+                         exit 1 ;;
+                esac
+                [ $((i % 8)) = 0 ] && echo "  still building ($((i*15))s)"
+                sleep 15
+              done
+              echo "ERROR: build did not finish within $((WAIT_POLLS*15))s" >&2
+              exit 1
+          resources:
+            requests: {cpu: 20m, memory: 96Mi}
+            limits: {cpu: "1", memory: 512Mi}

@@ -404,8 +404,17 @@ components:
     # the nav item stays hidden, which looks identical to it not working.
     setDashboardFlags: true
 
-  # Session broker. Needs an image built in-cluster first; see
-  # components/broker/README.md. Wave 20.
+  # Builds the session-broker image with OpenShift Pipelines. The
+  # Pipeline is declared in git; the PipelineRun is created by a hook,
+  # because OpenShift GitOps excludes tekton.dev/PipelineRun by
+  # default and one committed to git is silently ignored. Wave 19.
+  brokerBuild:
+    enabled: false
+    namespace: "session-broker"
+    installOperator: true
+
+  # Session broker. Wave 20, AFTER brokerBuild -- the image does not
+  # exist until that Pipeline has run. See components/broker/README.md.
   broker:
     enabled: false
 

@@ -1,0 +1,24 @@
+{{/*
+Gives the Application a real resource, so its PostSync hook runs at
+all -- a chart of only hooks never syncs. The checksum re-runs the
+hook when the source revision or context changes, which is what you
+want for a build.
+*/}}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: broker-build-state
+  namespace: {{ .Values.build.namespace }}
+  labels:
+    demo.redhat.com/application: "openclaw-on-openshift"
+  annotations:
+    openclaw.dev/hook-config: {{ printf "%v|%v|%v|%v" .Values.build.revision .Values.build.contextPath .Values.build.imageStream .Values.build.tag | sha256sum | trunc 16 }}
+data:
+  revision: {{ .Values.build.revision | quote }}
+  contextPath: {{ .Values.build.contextPath | quote }}
+  image: {{ printf "%s:%s" .Values.build.imageStream .Values.build.tag | quote }}
+  note: |
+    The PipelineRun is created by the broker-build-run hook, not by
+    Argo: OpenShift GitOps excludes tekton.dev/PipelineRun by default,
+    so one committed to git is silently ignored.
