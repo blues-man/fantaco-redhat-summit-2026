@@ -424,11 +424,19 @@ components:
     # archive at the revision Argo is syncing, because it lives at the
     # repo root rather than in this chart.
     #
-    # OFF until it has run against a cluster once. Everything it reuses
-    # is proven, but the archive fetch and the verify-in-main/ check
-    # are new, and an untested hook that fails marks the Application
-    # Degraded.
-    injectSkills: false
+    # ON, but it has NOT yet run against a cluster. Everything it
+    # reuses is proven -- exec/cp from the heartbeat hook, counting and
+    # retry from seat-keys -- but the archive fetch and the
+    # verify-in-main/ check are new code.
+    #
+    # If it fails it marks ONLY field-content-seat-runtime Degraded;
+    # seats, keys and the platform are unaffected. Set false to back
+    # out, and fall back to ../6-inject-enterprise-skills.sh.
+    #
+    # First run to watch:
+    #   oc logs -n agentic-user1 -l job-name=seat-skills
+    # Expect: injected=N skipped=0 failed=0
+    injectSkills: true
     skillNames:
       - quote-builder
 
