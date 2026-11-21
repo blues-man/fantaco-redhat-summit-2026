@@ -1,0 +1,43 @@
+{{/*
+The resource that makes the hook fire at all.
+
+A PostSync hook runs when a sync happens, and Argo does not count hook
+resources as managed resources. A chart that is ONLY hooks therefore
+has zero resources, is trivially Synced, never performs a sync
+operation, and its PostSync hook never runs. That is exactly what
+happened on w5xfc: field-content-seat-keys sat Synced/Healthy with
+`resources: 0` and `operationState: none`, so no key was ever minted
+and the Claw stayed at CredentialsResolved=False.
+
+So this ConfigMap exists to give the Application something real to
+sync. The checksum means a change to any input the hook cares about --
+the seat count, the model, the gateway, the expiry -- produces a diff,
+a sync, and therefore a re-run. Without it you could change seats.count
+and nothing would mint keys for the new seats.
+
+It is also the record of what the keys were minted against, which is
+worth having when a seat's key stops working and nobody remembers
+which gateway or expiry it came from.
+*/}}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: seat-keys-state
+  namespace: {{ .Values.maas.tenantNamespace | default "models-as-a-service" }}
+  labels:
+    demo.redhat.com/application: "openclaw-on-openshift"
+  annotations:
+    openclaw.dev/hook-config: {{ printf "%v|%v|%v|%v|%v" .Values.seats.count .Values.maas.model .Values.maas.gatewayHost .Values.maas.keyExpirationDays .Values.keys.asSeat | sha256sum | trunc 16 }}
+data:
+  seatCount: {{ .Values.seats.count | quote }}
+  namespacePrefix: {{ .Values.seats.namespacePrefix | quote }}
+  model: {{ .Values.maas.model | quote }}
+  gateway: {{ .Values.maas.gatewayHost | quote }}
+  keySecretName: {{ .Values.maas.keySecretName | quote }}
+  keyExpirationDays: {{ .Values.maas.keyExpirationDays | quote }}
+  mintedAsSeat: {{ .Values.keys.asSeat | quote }}
+  note: |
+    Keys themselves are never recorded here. This is the configuration
+    the seat-keys hook minted against; the keys live in each seat's
+    litellm-api-key secret and are create-if-absent, never rewritten.
