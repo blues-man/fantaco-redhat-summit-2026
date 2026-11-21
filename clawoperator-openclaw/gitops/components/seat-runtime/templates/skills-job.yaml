@@ -130,7 +130,15 @@ spec:
             - |
               set -uo pipefail
               echo "fetching {{ $repoArchive }}"
-              if ! curl -sSL --max-time 120 -o /tmp/repo.tgz "{{ $repoArchive }}"; then
+              # The archive is ~81MB -- the repo carries a large
+              # fantaco-product-main/ tree this does not need. A flat
+              # --max-time needs a sustained ~700KB/s just to avoid
+              # tripping, and when it trips the message is the useless
+              # "could not fetch". Judge a stall instead: give up only
+              # if throughput stays under 10KB/s for a minute.
+              if ! curl -sSL --connect-timeout 20 --max-time 900 \
+                     --speed-time 60 --speed-limit 10240 \
+                   -o /tmp/repo.tgz "{{ $repoArchive }}"; then
                 echo "ERROR: could not fetch the repo archive." >&2
                 echo "The seat content lives at the repo root, not in the chart;" >&2
                 echo "this needs egress to the git host, or a private repo token." >&2
