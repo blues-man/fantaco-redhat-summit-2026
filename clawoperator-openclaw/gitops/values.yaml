@@ -409,14 +409,14 @@ components:
   # because OpenShift GitOps excludes tekton.dev/PipelineRun by
   # default and one committed to git is silently ignored. Wave 19.
   brokerBuild:
-    enabled: false
+    enabled: true
     namespace: "session-broker"
     installOperator: true
 
   # Session broker. Wave 20, AFTER brokerBuild -- the image does not
   # exist until that Pipeline has run. See components/broker/README.md.
   broker:
-    enabled: false
+    enabled: true
 
   # Real OpenShift identities for every seat, via an htpasswd IdP
   # APPENDED to the existing providers. Off by default: it edits
