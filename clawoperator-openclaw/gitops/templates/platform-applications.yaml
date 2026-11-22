@@ -711,7 +711,25 @@ spec:
   syncPolicy:
     automated:
       prune: false
+      # selfHeal off: update-broker-ocp.sh edits the Deployment at
+      # runtime to inject routes, and selfHeal would fight it.
       selfHeal: false
     syncOptions:
       - CreateNamespace=true
+      # The Cluster CR here needs the CloudNativePG CRD, and the
+      # Subscription that installs it is in the SAME manifest set. Without
+      # this, discovery fails before anything is applied:
+      #   failed to discover server resources for group version
+      #   postgresql.cnpg.io/v1: the server could not find the requested resource
+      # and the whole Application stays Missing -- including the broker
+      # Deployment, which has no such dependency.
+      - SkipDryRunOnMissingResource=true
+    retry:
+      # Enough attempts to outlast an OLM install, which is the only
+      # reason the first pass fails.
+      limit: 10
+      backoff:
+        duration: 20s
+        factor: 2
+        maxDuration: 3m
 {{- end }}
