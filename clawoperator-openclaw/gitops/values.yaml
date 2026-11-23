@@ -451,6 +451,20 @@ components:
     # GUID. See components/seat-identities/values.yaml before using.
     sharedPassword: ""
 
+  # Forward OpenClaw traces into RHOAI MLflow via one shared
+  # OpenTelemetry Collector.
+  #
+  # The gateway cannot talk to RHOAI MLflow directly -- it runs with
+  # automountServiceAccountToken off, so it has no token and no
+  # service-ca.crt, and MLflow needs both. The collector holds the
+  # credential; seats post plain OTLP to it.
+  tracing:
+    enabled: true
+    namespace: "openclaw-tracing"
+    experimentName: "openclaw-traces"
+    # Looked up and patched in by the hook. Pin it only to skip that.
+    experimentId: ""
+
   # Mint a MaaS key per seat and write it into litellm-api-key.
   #
   # This is what made the demo non-functional out of the box: without a

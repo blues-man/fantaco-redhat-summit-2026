@@ -1,0 +1,156 @@
+{{/*
+Create the MLflow experiment, then put its real id into the collector.
+
+WHY THIS CANNOT BE A RESOURCE. The experiment is not a CR. It is
+created through the MLflow GATEWAY REST API, and its id is assigned by
+MLflow -- so it cannot be known at template time. The collector needs
+that id as a static header, which makes this a two-step: create (or
+find) the experiment, then patch the collector.
+
+WHY GUESSING THE ID IS WORSE THAN FAILING. Experiment ids are PER
+WORKSPACE -- "experiment 2" means nothing without the workspace, which
+is why both headers exist. Point the collector at a wrong-but-valid id
+and MLflow still answers 200; the traces simply land somewhere nobody
+is looking. So this looks the id up rather than defaulting to one.
+
+Create-if-absent, like the other hooks: an existing experiment is
+reused, so a resync does not churn ids under a running collector.
+*/}}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: mlflow-experiment
+  namespace: {{ .Values.tracing.namespace }}
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "0"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: mlflow-experiment
+  namespace: {{ .Values.tracing.namespace }}
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "0"
+rules:
+  - apiGroups: ["opentelemetry.io"]
+    resources: ["opentelemetrycollectors"]
+    verbs: ["get", "list", "patch", "update"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "create", "patch", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: mlflow-experiment
+  namespace: {{ .Values.tracing.namespace }}
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "0"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: mlflow-experiment
+subjects:
+  - kind: ServiceAccount
+    name: mlflow-experiment
+    namespace: {{ .Values.tracing.namespace }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mlflow-experiment-{{ printf "%v|%v" .Values.tracing.experimentName .Values.tracing.namespace | sha256sum | trunc 8 }}
+  namespace: {{ .Values.tracing.namespace }}
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      serviceAccountName: mlflow-experiment
+      restartPolicy: Never
+      containers:
+        - name: experiment
+          image: image-registry.openshift-image-registry.svc:5000/openshift/cli:latest
+          env:
+            - name: WORKSPACE
+              value: {{ .Values.tracing.namespace | quote }}
+            - name: EXP_NAME
+              value: {{ .Values.tracing.experimentName | quote }}
+            - name: COLLECTOR
+              value: {{ .Values.tracing.collectorName | quote }}
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -uo pipefail
+              TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+              CA=/var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt
+              # The experiment API is on the GATEWAY, not the Service that
+              # receives traces. Two different hosts for two different jobs.
+              GW=https://data-science-gateway.redhat-ods-applications.svc:8443
+
+              hdr=(-H "Authorization: Bearer $TOKEN" -H "X-MLflow-Workspace: $WORKSPACE" -H 'Content-Type: application/json')
+
+              get_id() {
+                curl -s --cacert "$CA" -m 30 "${hdr[@]}" \
+                  "$GW/mlflow/api/2.0/mlflow/experiments/get-by-name?experiment_name=$EXP_NAME" 2>/dev/null \
+                | python3 -I -c "
+              import json,sys
+              try: d=json.load(sys.stdin)
+              except Exception: sys.exit(1)
+              e=(d.get('experiment') or {})
+              i=e.get('experiment_id')
+              print(i) if i else sys.exit(1)
+              " 2>/dev/null
+              }
+
+              ID=$(get_id || true)
+              if [ -z "${ID:-}" ]; then
+                echo "creating experiment $EXP_NAME in workspace $WORKSPACE"
+                curl -s --cacert "$CA" -m 30 -X POST "${hdr[@]}" \
+                  -d "{\"name\":\"$EXP_NAME\"}" \
+                  "$GW/mlflow/api/2.0/mlflow/experiments/create" >/dev/null 2>&1 || true
+                sleep 3
+                ID=$(get_id || true)
+              else
+                echo "experiment $EXP_NAME already exists"
+              fi
+
+              if [ -z "${ID:-}" ]; then
+                echo "ERROR: could not create or find experiment $EXP_NAME." >&2
+                echo "Check the gateway is reachable and the SA is bound to" >&2
+                echo "mlflow-operator-mlflow-integration." >&2
+                exit 1
+              fi
+              echo "experiment id: $ID"
+
+              # Put the real id into the collector. A wrong id still
+              # returns 200 from MLflow, so this is the difference
+              # between traces arriving and vanishing quietly.
+              CUR=$(oc get opentelemetrycollector "$COLLECTOR" -n "$WORKSPACE" \
+                     -o jsonpath='{.spec.config.exporters.otlphttp/mlflow.headers.x-mlflow-experiment-id}' 2>/dev/null || true)
+              if [ "$CUR" = "$ID" ]; then
+                echo "collector already points at $ID"
+                exit 0
+              fi
+              oc patch opentelemetrycollector "$COLLECTOR" -n "$WORKSPACE" --type merge \
+                -p "{\"spec\":{\"config\":{\"exporters\":{\"otlphttp/mlflow\":{\"headers\":{\"x-mlflow-experiment-id\":\"${ID}\"}}}}}}" \
+                && echo "collector repointed to experiment $ID"
+
+              # Record it so the next render can pin it without a lookup.
+              oc create configmap mlflow-experiment-id -n "$WORKSPACE" \
+                --from-literal=experimentId="$ID" --from-literal=experimentName="$EXP_NAME" \
+                --dry-run=client -o yaml | oc apply -f - >/dev/null 2>&1 || true
+          resources:
+            requests: {cpu: 20m, memory: 96Mi}
+            limits: {cpu: "1", memory: 512Mi}

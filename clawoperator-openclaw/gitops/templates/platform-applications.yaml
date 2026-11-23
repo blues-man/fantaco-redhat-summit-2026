@@ -547,6 +547,48 @@ spec:
       selfHeal: true
 {{- end }}
 
+{{- if .Values.components.tracing.enabled }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{ .Release.Name }}-tracing
+  namespace: {{ .Values.argocd.namespace }}
+  labels:
+    {{- include "openclaw.labels" . | nindent 4 }}
+  annotations:
+    # Wave 16: after the seats exist (the egress policies live in their
+    # namespaces) and before the seats are told where to send traces.
+    argocd.argoproj.io/sync-wave: "16"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: {{ .Values.argocd.project }}
+  source:
+    repoURL: {{ include "openclaw.repoURL" . }}
+    targetRevision: {{ include "openclaw.revision" . }}
+    path: {{ include "openclaw.basePath" . }}/components/tracing
+    helm:
+      valuesObject:
+        tracing:
+          namespace: {{ .Values.components.tracing.namespace }}
+          experimentName: {{ .Values.components.tracing.experimentName }}
+          experimentId: {{ .Values.components.tracing.experimentId | quote }}
+          seats:
+            count: {{ include "openclaw.seatCount" . }}
+            namespacePrefix: {{ .Values.seats.namespacePrefix }}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ .Values.components.tracing.namespace }}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - SkipDryRunOnMissingResource=true
+{{- end }}
+
 {{- if .Values.components.seatKeys.enabled }}
 ---
 apiVersion: argoproj.io/v1alpha1

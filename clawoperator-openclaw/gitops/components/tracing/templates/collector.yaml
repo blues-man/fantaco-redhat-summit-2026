@@ -1,0 +1,113 @@
+{{/*
+One shared collector, forwarding OpenClaw traces into RHOAI MLflow.
+
+WHY A COLLECTOR AT ALL. The OpenClaw gateway runs with
+automountServiceAccountToken off: no SA token, no service-ca.crt.
+RHOAI MLflow wants a bearer token and TLS, so the gateway can never
+authenticate to it however its OTLP env is set. The collector holds
+the credential and the seats post plain OTLP to it.
+
+WHY ONE, NOT A SIDECAR. The Red Hat starter kit uses a per-pod
+sidecar. At 30 seats that is 30 pod specs, and the Claw CR has no
+field for extra containers. One collector needs only the seat's
+endpoint repointed.
+
+WHY NOT data-science-collector. It belongs to Monitoring
+(default-monitoring); the RHOAI operator reconciles away any exporter
+added to it.
+*/}}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.tracing.namespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  labels:
+    demo.redhat.com/application: "openclaw-on-openshift"
+    # BOTH labels, for two different consumers. Half of this is the
+    # classic way to end up staring at an empty UI.
+    #
+    # MLflow matches workspaceLabelSelector on this one; without it
+    # every call fails "Workspace '<ns>' not found".
+    mlflow.opendatahub.io/workspace: "true"
+    # The dashboard's project selector uses this one; without it the
+    # workspace exists but cannot be selected in the UI.
+    opendatahub.io/dashboard: "true"
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Values.tracing.namespace }}
+  namespace: {{ .Values.tracing.namespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: openclaw-tracing-mlflow
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  # Already shipped on 3.5.3, prefixed. Creating a `mlflow-integration`
+  # duplicate (as the starter kit says) is for 3.3.1.
+  name: {{ .Values.tracing.integrationClusterRole }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.tracing.namespace }}
+    namespace: {{ .Values.tracing.namespace }}
+---
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: {{ .Values.tracing.collectorName }}
+  namespace: {{ .Values.tracing.namespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+  labels:
+    demo.redhat.com/application: "openclaw-on-openshift"
+spec:
+  mode: deployment
+  replicas: 1
+  serviceAccount: {{ .Values.tracing.namespace }}
+  config:
+    extensions:
+      bearertokenauth:
+        filename: /var/run/secrets/kubernetes.io/serviceaccount/token
+    receivers:
+      otlp:
+        protocols:
+          http:
+            endpoint: 0.0.0.0:4318
+          grpc:
+            endpoint: 0.0.0.0:4317
+    processors:
+      batch:
+        timeout: 5s
+    exporters:
+      otlphttp/mlflow:
+        endpoint: {{ .Values.tracing.mlflowService | quote }}
+        traces_endpoint: {{ printf "%s/v1/traces" .Values.tracing.mlflowService | quote }}
+        # LOAD-BEARING. gzip makes MLflow answer HTTP 400.
+        compression: none
+        auth:
+          authenticator: bearertokenauth
+        tls:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt
+        headers:
+          # Both required. Without the workspace: 400. Without the
+          # experiment id: 422. The id is patched to the real value by
+          # the experiment hook -- see experiment-job.yaml.
+          X-MLflow-Workspace: {{ .Values.tracing.namespace | quote }}
+          x-mlflow-experiment-id: {{ .Values.tracing.experimentId | default "0" | quote }}
+    service:
+      extensions: [bearertokenauth]
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [batch]
+          exporters: [otlphttp/mlflow]

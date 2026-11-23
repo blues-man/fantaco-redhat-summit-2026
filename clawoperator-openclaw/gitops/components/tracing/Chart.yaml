@@ -1,0 +1,8 @@
+apiVersion: v2
+name: tracing
+description: >-
+  One shared OpenTelemetry Collector forwarding OpenClaw traces into the
+  RHOAI-managed MLflow. Replaces the standalone community MLflow as the
+  trace backend.
+type: application
+version: 0.1.0

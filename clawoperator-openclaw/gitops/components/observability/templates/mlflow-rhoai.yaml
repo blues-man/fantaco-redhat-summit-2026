@@ -4,12 +4,20 @@
 {{/*
 RHOAI MLflow — backs Gen AI studio's prompt registry ("Save prompt").
 
-WHY A SECOND DATABASE AND A SECOND SERVER. The standalone MLflow in the
-`mlflow` namespace is the OTLP trace backend for the whole demo and must
-not be disturbed. RHOAI MLflow is a separate concern: it has NO OTLP
-ingest at all (/v1/traces and /otlp/v1/traces both 404 even
-authenticated), so OpenClaw's diagnostics-otel still exports to the
-standalone server. They coexist deliberately.
+WHY A SECOND DATABASE AND A SECOND SERVER.
+
+CORRECTED 2026-11-23. This comment used to say RHOAI MLflow has no OTLP
+ingest, because /v1/traces 404s. That was a testing error on both the
+scripts side and here: the probe hit the GATEWAY's /mlflow prefix,
+which legitimately 404s. Ingest is on the MLflow SERVICE --
+https://mlflow.redhat-ods-applications.svc:8443/v1/traces -- and it
+works, given a bearer token, service-ca TLS, and the X-MLflow-Workspace
+and x-mlflow-experiment-id headers.
+
+So RHOAI MLflow is now the trace backend too; see components/tracing
+for the collector that feeds it. The standalone community MLflow in the
+`mlflow` namespace is retained for now as the fallback audience-reset.sh
+knows about, and is on the way out.
 
 Without this CR the mlflow-ui pod logs, every 30s:
   "MLflow CR auto-discovery failed, MLflow endpoints will return 503"

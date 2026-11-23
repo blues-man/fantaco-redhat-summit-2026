@@ -1,0 +1,23 @@
+tracing:
+  namespace: "openclaw-tracing"
+  collectorName: "openclaw-mlflow"
+
+  # The MLflow SERVICE, not the gateway. The gateway's /mlflow prefix
+  # 404s, which is what made an earlier investigation conclude RHOAI
+  # MLflow had no OTLP ingest at all. It does; it is just here.
+  mlflowService: "https://mlflow.redhat-ods-applications.svc:8443"
+
+  # Ships on RHOAI 3.5.3 already prefixed. Do NOT create a
+  # `mlflow-integration` role as the starter kit says -- that advice is
+  # for 3.3.1, which lacks it.
+  integrationClusterRole: "mlflow-operator-mlflow-integration"
+
+  experimentName: "openclaw-traces"
+  # Pinned only as a fallback. The hook looks the real one up and
+  # patches the collector, because experiment IDs are PER WORKSPACE and
+  # guessing one sends traces into a void that still returns 200.
+  experimentId: ""
+
+  seats:
+    count: 1
+    namespacePrefix: "agentic-user"
