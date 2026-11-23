@@ -192,7 +192,7 @@ print({k:v for k,v in c.items() if v>1} or "no duplicates")'
 
 **On stage: the MaaS model lives in `models-as-a-service`, not in a seat.**
 
-## RHOAI MLflow: deployed for prompts, but traces still cannot go there
+## RHOAI MLflow: prompts are integrated; OTLP traces work too (see correction below)
 
 **Deployed 2026-11-18 by `./deploy-rhoai-mlflow.sh`.** It backs Gen AI studio's
 prompt registry and nothing else. The standalone MLflow in the `mlflow`
@@ -247,21 +247,73 @@ The CR details, all still true:
 With that it reaches `Available=True`, v3.14.0, at
 `https://mlflow.redhat-ods-applications.svc:8443/mlflow`.
 
-**But there is no OTLP ingestion endpoint.** With a valid bearer token *and* a
-valid workspace, `/mlflow/v1/traces` and `/mlflow/otlp/v1/traces` both return
-`404 ENDPOINT_NOT_FOUND`. An unauthenticated probe returns 401, which looks
-like the route exists — it does not; the auth gate rejects before routing.
-**Do not read a 401 as evidence of a route.** The standalone MLflow 3.12
-accepts OTLP at `/v1/traces` and had ingested 584 traces, so this is an RHOAI
-packaging difference, not a client problem.
+### CORRECTION 2026-11-23: OTLP trace ingestion DOES work. The earlier entry here was wrong.
 
-OpenClaw's `diagnostics-otel` posts OTLP, so it cannot target RHOAI MLflow
-directly. Getting there needs either an OTLP→MLflow-API translator in front,
-or OpenClaw emitting via the MLflow tracing SDK instead of OTLP — a producer
-change, not a dist patch.
+This file previously said *"there is no OTLP ingestion endpoint, do not retry"*.
+**That was wrong**, and the error was in how it was tested, not in the product.
+The earlier probes used the **gateway** host with its `/mlflow` prefix
+(`/mlflow/v1/traces`), which legitimately 404s. OTLP ingest is served by the
+**MLflow Service itself**, on 8443, at the root path `/v1/traces`. Different
+host, different path. One negative probe against the wrong address became a
+documented dead end — don't repeat that.
 
-So the split stands: **prompts go to RHOAI MLflow, traces go to the standalone
-one.** Do not try to consolidate them without building that translator first.
+Proven end to end on rosa-wv5l4 2026-11-23, RHOAI 3.5.3: a real OTLP span
+POSTed to the service returned **HTTP 200** and the trace appeared in the
+workspace. Red Hat documents the pattern in
+`red-hat-data-services/agentic-starter-kits`,
+`agents/openclaw/deployment/docs/mlflow-tracing.md`.
+
+**The endpoint**
+
+```
+POST https://mlflow.redhat-ods-applications.svc:8443/v1/traces
+  Authorization: Bearer <pod ServiceAccount token>
+  X-MLflow-Workspace: <namespace>
+  x-mlflow-experiment-id: <id>
+  Content-Type: application/json      # OTLP/HTTP
+  (TLS trust: /var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt)
+```
+
+**Use the status code as a ladder — each one names the next missing piece:**
+
+| code | meaning |
+| --- | --- |
+| 404 (HTML) | wrong address — you are on the gateway `/mlflow` prefix, not the Service |
+| 400 `Workspace context is required` | endpoint reached; add `X-MLflow-Workspace` |
+| 403 `PERMISSION_DENIED` | workspace accepted; the caller needs the RBAC role |
+| 422 `missing x-mlflow-experiment-id` | RBAC satisfied; add the experiment header |
+| 400 `no spans found` | all headers right; body had no spans |
+| **200** | ingested |
+
+**RBAC: 3.5.3 ships the role, but prefixed.** The starter kit says to create
+`mlflow-integration` because 3.3.1 lacks it. On 3.5.3 it exists as
+**`mlflow-operator-mlflow-integration`** — grant that, do not create a
+duplicate. Bind it to the exporting pod's ServiceAccount.
+
+**Other prerequisites, both already true on this cluster:**
+- MLflow must run with `--enable-workspaces` (the operator sets it by default).
+- The namespace must match `workspaceLabelSelector` — `create-seat-users.sh`
+  already labels every seat.
+
+**The management API is NOT on the Service.** Creating or looking up an
+experiment 404s there; use the gateway instead:
+`https://<gateway>/mlflow/api/2.0/mlflow/experiments/create` with the same
+`X-MLflow-Workspace` header. Ingest on the Service, management on the gateway.
+
+**Known exporter gotcha:** keep `compression: none` on an `otlphttp` exporter —
+gzip makes it return HTTP 400.
+
+**What is still not done.** OpenClaw's `diagnostics-otel` posts OTLP, so it can
+reach this, but it needs a collector in between to attach the bearer token,
+workspace and experiment headers — the collector is not an MLflow SDK client.
+The starter kit uses a per-pod sidecar. At 105 seats a single shared collector
+is more attractive: RHOAI already runs `data-science-collector` in
+`redhat-ods-monitoring` and even ships a
+`data-science-collector-mlflow-trace-export` ClusterRole, but its only exporter
+today is `otlp/tempo`, so an `otlphttp` exporter to MLflow still has to be
+added. Until that is built, the split stands in practice: **prompts in RHOAI
+MLflow, traces in the standalone one** — but it is now a backlog item, not a
+dead end.
 
 ## Seat identities: there are none by default, and on ROSA HCP `oc` cannot add them
 
