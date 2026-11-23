@@ -630,6 +630,34 @@ except: pass
         _check_fail "Seeded skill MISSING (${SEEDED_SKILL}) — repair with ./6-inject-enterprise-skills.sh ${NS##*user} ${NS##*user}"
       fi
 
+      # 19. The skill is visible to the agent the UI actually runs as.
+      #
+      # Check 18 above is NOT sufficient, and this is how a broken /quote
+      # reached a user on 2026-11-23 with preflight green. The file was present
+      # and correct; the UI still could not use the skill, because the gateway
+      # UI runs as agent `main` while `agents.list` declared only `default`.
+      # An undeclared agent never resolves ~/.openclaw/workspace/skills:
+      #   skills check --agent default -> Visible to model: 17
+      #   skills check --agent main    -> Visible to model: 15
+      #
+      # The failure surfaces as a HALLUCINATION, not an error — the model says
+      # the skill's file is missing and invents a path under /app/skills that
+      # has never existed. Do not trust the model's own account.
+      #
+      # Do NOT verify by asking the agent to list its skills either: that also
+      # returns 15 on a healthy seat and omits the workspace ones. Only
+      # `skills check --agent <id>` is reliable. Repair with
+      # ./fix-agent-workspace-skills.sh
+      SKILL_ID="${PREFLIGHT_SEEDED_SKILL_ID:-quote_builder}"
+      UI_AGENT="${PREFLIGHT_UI_AGENT:-main}"
+      if oc exec deployment/instance -n "$NS" -c gateway -- \
+           node /app/dist/index.js --no-color skills check --agent "$UI_AGENT" 2>/dev/null \
+           | grep -q "$SKILL_ID"; then
+        _check_pass "Seeded skill usable by the UI agent '${UI_AGENT}' (${SKILL_ID})"
+      else
+        _check_fail "Seeded skill NOT visible to agent '${UI_AGENT}' — run ./fix-agent-workspace-skills.sh ${NS##*user} ${NS##*user}"
+      fi
+
       # ── Per-namespace summary ──
       NS_TOTAL=$((_PASS + _FAIL))
       echo ""
