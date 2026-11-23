@@ -291,6 +291,24 @@ if ("${AUDIENCE_HOST}") {
   c.gateway.controlUi.allowedOrigins = origins;
 }
 
+// 1a. Declare the 'main' agent so the UI can see the seeded workspace skills.
+//
+// The operator re-seeds openclaw.json with agents.list containing ONLY
+// 'default'. The gateway UI runs as agent 'main', and an undeclared agent
+// never resolves ~/.openclaw/workspace/skills, so /quote_builder fails for
+// attendees while the files are present and preflight is green:
+//   skills check --agent default -> Visible to model: 17
+//   skills check --agent main    -> Visible to model: 15
+// agents.defaults.workspace is already correct but does not apply to an
+// undeclared agent. Without this block the fix is undone by the next restart.
+c.agents = c.agents || {};
+c.agents.defaults = c.agents.defaults || {};
+var ws = c.agents.defaults.workspace || "~/.openclaw/workspace";
+c.agents.list = c.agents.list || [];
+if (!c.agents.list.some(function (a) { return a && a.id === "main"; })) {
+  c.agents.list.push({ id: "main", name: "OpenClaw Assistant", workspace: ws });
+}
+
 // 1b. Legacy password cleanup — remove stale gateway.password from pre-token configs
 if (c.gateway && c.gateway.password) delete c.gateway.password;
 
