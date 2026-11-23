@@ -663,6 +663,9 @@ spec:
       valuesObject:
         build:
           namespace: {{ .Values.components.brokerBuild.namespace }}
+          createStatusKey: {{ .Values.components.brokerBuild.createStatusKey }}
+        deployer:
+          guid: {{ include "openclaw.guid" . | quote }}
           repoUrl: {{ include "openclaw.repoURL" . | trimSuffix ".git" | quote }}
           revision: {{ include "openclaw.revision" . | quote }}
           installOperator: {{ .Values.components.brokerBuild.installOperator }}
@@ -679,6 +682,48 @@ spec:
 {{- end }}
 
 {{- if .Values.components.broker.enabled }}
+---
+# CloudNativePG on its OWN Application, one wave earlier.
+#
+# It used to be synced with the rest of broker-pg/openshift, and that
+# deadlocks: the Cluster CR for broker-db needs the CRD this operator
+# installs, so Argo fails DISCOVERY for the whole Application --
+#   failed to discover server resources for group version
+#   postgresql.cnpg.io/v1
+# -- and nothing is applied, including the Subscription that would have
+# created the CRD, and including the broker Deployment which does not
+# depend on it at all. SkipDryRunOnMissingResource does not help,
+# because the failure is whole-Application discovery rather than a
+# per-resource dry run. Splitting the operator out is the fix.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{ .Release.Name }}-broker-db-operator
+  namespace: {{ .Values.argocd.namespace }}
+  labels:
+    {{- include "openclaw.labels" . | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "19"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: {{ .Values.argocd.project }}
+  source:
+    repoURL: {{ include "openclaw.repoURL" . }}
+    targetRevision: {{ include "openclaw.revision" . }}
+    path: clawoperator-openclaw/broker-pg/openshift
+    directory:
+      recurse: false
+      include: "{cloudnativepg-operator.yaml}"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: session-broker
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
 ---
 # Plain-manifest Application: the broker manifests already exist as YAML
 # under broker-pg/openshift and are not worth re-expressing as a chart.
@@ -704,7 +749,9 @@ spec:
     path: clawoperator-openclaw/broker-pg/openshift
     directory:
       recurse: false
-      include: "{cloudnativepg-operator.yaml,broker-db.yaml,broker.yaml}"
+      # The operator is a separate Application a wave earlier, so its
+      # CRD exists before the Cluster CR here is evaluated.
+      include: "{broker-db.yaml,broker.yaml}"
   destination:
     server: https://kubernetes.default.svc
     namespace: session-broker

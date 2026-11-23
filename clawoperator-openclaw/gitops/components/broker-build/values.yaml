@@ -21,3 +21,9 @@ build:
   # How long the hook waits for the build, in 15s polls. 80 = 20 min.
   # A first build pulls a nodejs base image and runs npm ci.
   waitPolls: 80
+
+  # Generate the broker's status key so its Deployment can start without
+  # a script run first. update-broker-ocp.sh --rotate-status-key still
+  # overwrites it and prints the URL to share.
+  createStatusKey: true
+  statusKey: ""

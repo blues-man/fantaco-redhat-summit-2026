@@ -1,3 +1,18 @@
+{{/*
+JOB NAME CARRIES A CHECKSUM OF ITS INPUTS, and that is not cosmetic.
+
+Kubernetes Jobs are immutable. Change a value and Helm renders a new
+Job spec, but the object already on the cluster is NOT replaced -- Argo
+only deletes it when the hook next fires, which is not guaranteed to
+happen before the stale Job is seen as Complete. On s4p7f this is
+exactly what went wrong at 30 seats: the Application correctly carried
+seats.count 30 while the running Job still had SEAT_COUNT=1. It wrote
+one identity, reported Complete, and every login for seats 2-30 then
+failed -- with nothing anywhere saying the Job was out of date.
+
+A checksum in the NAME means a changed input is a different object, so
+it cannot be silently reused.
+*/}}
 {{- if .Values.heartbeat.muzzle }}
 {{/*
 Muzzle the heartbeat on every seat.
@@ -81,7 +96,7 @@ subjects:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: seat-heartbeat
+  name: seat-heartbeat-{{ printf "%v|%v" .Values.seats.count .Values.heartbeat.muzzle | sha256sum | trunc 8 }}
   namespace: {{ .Values.seats.namespacePrefix }}1
   annotations:
     argocd.argoproj.io/hook: PostSync

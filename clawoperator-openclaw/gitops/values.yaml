@@ -412,6 +412,10 @@ components:
     enabled: true
     namespace: "session-broker"
     installOperator: true
+    # Generate session-broker-status so the broker Deployment can
+    # start. Without it the pods sit in CreateContainerConfigError:
+    # broker.yaml mounts BROKER_STATUS_KEY with Optional: false.
+    createStatusKey: true
 
   # Session broker. Wave 20, AFTER brokerBuild -- the image does not
   # exist until that Pipeline has run. See components/broker/README.md.
