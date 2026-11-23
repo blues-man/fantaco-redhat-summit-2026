@@ -1,0 +1,69 @@
+# One shared OpenTelemetry Collector that forwards OpenClaw traces into the
+# RHOAI-managed MLflow.
+#
+# WHY A COLLECTOR AT ALL. The OpenClaw gateway container has
+# automountServiceAccountToken off — it has neither
+# /var/run/secrets/kubernetes.io/serviceaccount/token nor service-ca.crt
+# (verified on rosa-wv5l4 2026-11-23). RHOAI MLflow requires a bearer token and
+# TLS, so OpenClaw can never authenticate to it directly no matter how its OTLP
+# env vars are set. The collector holds the credential; OpenClaw just posts
+# plain OTLP to it.
+#
+# WHY ONE SHARED COLLECTOR, NOT A SIDECAR. The Red Hat starter kit
+# (red-hat-data-services/agentic-starter-kits,
+# agents/openclaw/deployment/docs/mlflow-tracing.md) uses a per-pod sidecar.
+# That means editing 105 pod specs. A single collector needs only the seat's
+# OTEL_EXPORTER_OTLP_TRACES_ENDPOINT repointed, which is already an env var in
+# openclaw.json.
+#
+# WHY NOT REUSE data-science-collector. It is owned by Monitoring
+# (default-monitoring), so the RHOAI operator reconciles it and would revert
+# any exporter we add.
+#
+# The MLflow endpoint is the SERVICE on 8443 at /v1/traces — NOT the gateway,
+# whose /mlflow prefix 404s. Required headers are X-MLflow-Workspace and
+# x-mlflow-experiment-id; without them you get 400 then 422.
+#
+# compression: none is load-bearing — gzip makes MLflow return HTTP 400.
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: openclaw-mlflow
+  namespace: openclaw-tracing
+spec:
+  mode: deployment
+  replicas: 1
+  serviceAccount: openclaw-tracing
+  config:
+    extensions:
+      bearertokenauth:
+        filename: /var/run/secrets/kubernetes.io/serviceaccount/token
+    receivers:
+      otlp:
+        protocols:
+          http:
+            endpoint: 0.0.0.0:4318
+          grpc:
+            endpoint: 0.0.0.0:4317
+    processors:
+      batch:
+        timeout: 5s
+    exporters:
+      otlphttp/mlflow:
+        endpoint: https://mlflow.redhat-ods-applications.svc:8443
+        traces_endpoint: https://mlflow.redhat-ods-applications.svc:8443/v1/traces
+        compression: none
+        auth:
+          authenticator: bearertokenauth
+        tls:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt
+        headers:
+          X-MLflow-Workspace: openclaw-tracing
+          x-mlflow-experiment-id: "2"
+    service:
+      extensions: [bearertokenauth]
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [batch]
+          exporters: [otlphttp/mlflow]

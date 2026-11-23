@@ -211,6 +211,23 @@ if [[ -n "$MLFLOW_ROUTE" ]]; then
   OTEL_HEADERS="x-mlflow-experiment-id=${EXPERIMENT_ID}"
 fi
 
+# ── Prefer RHOAI MLflow when the trace collector is deployed ──────────
+#
+# MUST mirror the same block in audience-reset.sh. Without it this script
+# silently reverts a migrated seat to the standalone MLflow: repatching one
+# seat on rosa-wv5l4 2026-11-23 restored its otel config and simultaneously
+# undid its endpoint, which is invisible unless you re-read openclaw.json.
+#
+# The collector exists because the gateway container has
+# automountServiceAccountToken off and so cannot present the bearer token
+# RHOAI MLflow requires. It also supplies X-MLflow-Workspace and
+# x-mlflow-experiment-id, so the seat needs no headers of its own.
+TRACE_COLLECTOR_NS="${TRACE_COLLECTOR_NS:-openclaw-tracing}"
+if oc get svc openclaw-mlflow-collector -n "$TRACE_COLLECTOR_NS" >/dev/null 2>&1; then
+  OTEL_ENDPOINT="http://openclaw-mlflow-collector.${TRACE_COLLECTOR_NS}.svc:4318/v1/traces"
+  OTEL_HEADERS=""
+fi
+
 # An opt-in namespace sends to the in-cluster fan-out collector. The collector
 # forwards the original spans to MLflow and a redacted copy to CloudWatch.
 TRACE_FORWARDER_ENDPOINT=""

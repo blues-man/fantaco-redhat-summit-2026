@@ -684,6 +684,25 @@ if [[ -n "$MLFLOW_ROUTE" ]]; then
   OTEL_INTERNAL_URL="${MLFLOW_INTERNAL_URL}"
 fi
 
+# ── Prefer RHOAI MLflow when the trace collector is deployed ──────────
+#
+# RHOAI MLflow needs a bearer token over TLS, and the gateway container has
+# automountServiceAccountToken off — no SA token, no service-ca.crt — so it
+# can never authenticate directly. The collector in openclaw-tracing holds the
+# credential and adds X-MLflow-Workspace and x-mlflow-experiment-id, so seats
+# just post plain OTLP to it and need no headers of their own.
+#
+# Deploy it with operator-patches/openclaw-mlflow-trace-collector.yaml. If it
+# is absent this falls back to the standalone community MLflow, so a cluster
+# without it behaves exactly as before.
+TRACE_COLLECTOR_NS="${TRACE_COLLECTOR_NS:-openclaw-tracing}"
+if oc get svc openclaw-mlflow-collector -n "$TRACE_COLLECTOR_NS" >/dev/null 2>&1; then
+  OTEL_BACKEND="RHOAI MLflow (via collector)"
+  OTEL_ENDPOINT="http://openclaw-mlflow-collector.${TRACE_COLLECTOR_NS}.svc:4318/v1/traces"
+  OTEL_HEADERS=""
+  OTEL_INTERNAL_URL="http://openclaw-mlflow-collector.${TRACE_COLLECTOR_NS}.svc:4318"
+fi
+
 # Save MLflow OTEL values (diagnostics-otel always targets MLflow when available)
 MLFLOW_OTEL_ENDPOINT="${OTEL_ENDPOINT}"
 MLFLOW_OTEL_HEADERS="${OTEL_HEADERS}"
@@ -1224,6 +1243,38 @@ spec:
     ports:
     - port: 5000
       protocol: TCP
+NETPOL_EOF
+  fi
+
+  # Egress to the RHOAI trace collector, when it is deployed.
+  #
+  # This selects the GATEWAY (app=claw) because the OTLP exporter opens the
+  # connection itself — it does NOT go through instance-proxy, even though
+  # HTTP_PROXY is set in that container. The proof is the policy above: the
+  # standalone MLflow has never been in the proxy allowlist yet has always
+  # received traces. Probing with Node `fetch` suggests otherwise, because
+  # fetch honours HTTP_PROXY and the exporter does not.
+  if oc get svc openclaw-mlflow-collector -n "${TRACE_COLLECTOR_NS:-openclaw-tracing}" >/dev/null 2>&1; then
+    oc apply -n "$NS" -f - <<NETPOL_EOF 2>/dev/null
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-instance-to-trace-collector
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values: ["claw", "claw-proxy"]
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ${TRACE_COLLECTOR_NS:-openclaw-tracing}
+      ports:
+        - {port: 4318, protocol: TCP}
+        - {port: 4317, protocol: TCP}
 NETPOL_EOF
   fi
   oc delete networkpolicy allow-instance-to-langfuse -n "$NS" 2>/dev/null || true

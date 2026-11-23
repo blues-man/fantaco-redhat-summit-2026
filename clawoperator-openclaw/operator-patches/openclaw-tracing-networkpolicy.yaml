@@ -1,0 +1,64 @@
+# Let a seat's OpenClaw gateway reach the shared MLflow trace collector.
+#
+# Seat namespaces restrict egress. `allow-instance-to-mlflow` whitelists the
+# standalone MLflow on port 5000 and nothing else, so repointing
+# OTEL_EXPORTER_OTLP_TRACES_ENDPOINT at the collector silently produces
+# "fetch failed" inside the gateway and ZERO spans at the collector — the
+# agent turn still succeeds, so nothing looks broken. Measured on rosa-wv5l4
+# 2026-11-23: collector otelcol_receiver_accepted_spans stayed at the one
+# synthetic probe while a real turn ran.
+#
+# Apply the egress rule in EVERY seat namespace you repoint, and the ingress
+# rule once in openclaw-tracing.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-instance-to-trace-collector
+  namespace: PLACEHOLDER_SEAT_NAMESPACE
+spec:
+  # NOTE: this selects the PROXY, not the gateway. All gateway egress is forced
+  # through instance-proxy (HTTP_PROXY/HTTPS_PROXY are set in the gateway, with
+  # NO_PROXY covering only localhost), so the pod that actually opens the
+  # outbound connection to the collector is app=claw-proxy. A policy selecting
+  # app=claw looks right, applies cleanly, and changes nothing.
+  podSelector:
+    matchLabels:
+      app: claw-proxy
+      claw.sandbox.redhat.com/instance: instance
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: openclaw-tracing
+      ports:
+        - port: 4318
+          protocol: TCP
+        - port: 4317
+          protocol: TCP
+---
+# Ingress side: accept OTLP from any seat namespace.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-seats-to-collector
+  namespace: openclaw-tracing
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: opentelemetry-collector
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchExpressions:
+              - key: kubernetes.io/metadata.name
+                operator: Exists
+      ports:
+        - port: 4318
+          protocol: TCP
+        - port: 4317
+          protocol: TCP
