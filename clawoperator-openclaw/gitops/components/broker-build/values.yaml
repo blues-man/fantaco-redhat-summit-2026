@@ -22,8 +22,16 @@ build:
   # A first build pulls a nodejs base image and runs npm ci.
   waitPolls: 80
 
-  # Generate the broker's status key so its Deployment can start without
-  # a script run first. update-broker-ocp.sh --rotate-status-key still
-  # overwrites it and prints the URL to share.
+  # Create the broker's status key so its Deployment can start without a
+  # script run first. Create-if-absent in a hook, so
+  # update-broker-ocp.sh --rotate-status-key keeps working and its value
+  # is not reverted on the next sync.
   createStatusKey: true
   statusKey: ""
+
+# Always supplied by the parent Application; declared here so the chart
+# renders and lints standalone. It was missing, and the status-key
+# template read .Values.deployer.guid regardless -- fine in Argo, a nil
+# pointer for anyone running helm template on this chart alone.
+deployer:
+  guid: ""

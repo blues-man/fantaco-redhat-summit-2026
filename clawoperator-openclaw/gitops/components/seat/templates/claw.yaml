@@ -134,3 +134,61 @@ spec:
                   supportsDeveloperRole: false
       logging:
         consoleLevel: debug
+{{- if .Values.tracing.enabled }}
+      # ---- tracing into RHOAI MLflow -----------------------------------
+      #
+      # WHY BOTH diagnostics.otel AND env, WHICH LOOKS REDUNDANT. They
+      # carry different halves. diagnostics.otel turns tracing ON and
+      # says what to capture; the ENDPOINT is only ever read from the
+      # OTEL_* environment. Set one without the other and you get
+      # either a tracer with nowhere to send, or an endpoint nothing
+      # emits to -- both silent.
+      #
+      # WHY env LIVES HERE AND NOT IN A PODSPEC. The operator owns the
+      # gateway container's env list and STRIPS anything it did not put
+      # there, so a Deployment-level env var survives until the next
+      # reconcile. spec.config.raw is merged before that enrichment, so
+      # this is the placement that survives a pod restart. That is the
+      # lesson audience-reset.sh learned the hard way.
+      diagnostics:
+        enabled: true
+        otel:
+          enabled: true
+          protocol: http/protobuf
+          traces: true
+          # Only traces. Metrics and logs have their own paths already,
+          # and MLflow ingests neither.
+          metrics: false
+          logs: false
+          sampleRate: {{ .Values.tracing.sampleRate }}
+          captureContent:
+            # NOT OPTIONAL, and not merely the parent of the flags
+            # below: resolveContentCapturePolicy() bails out with
+            # NO_MODEL_CONTENT_CAPTURE unless this is literally true,
+            # and the per-field flags are only read once that gate
+            # passes. Omit it and gen_ai spans still arrive -- with no
+            # prompt or completion bodies.
+            enabled: {{ .Values.tracing.captureContent }}
+            inputMessages: {{ .Values.tracing.captureContent }}
+            outputMessages: {{ .Values.tracing.captureContent }}
+            toolInputs: {{ .Values.tracing.captureContent }}
+            toolOutputs: {{ .Values.tracing.captureContent }}
+            toolDefinitions: {{ .Values.tracing.captureContent }}
+            systemPrompt: {{ .Values.tracing.captureSystemPrompt }}
+      env:
+        OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: {{ .Values.tracing.endpoint | quote }}
+        OTEL_EXPORTER_OTLP_TRACES_PROTOCOL: "http/protobuf"
+        # Without the semconv opt-in the gen_ai spans carry timings and
+        # token counts but no message bodies -- the same symptom as a
+        # missing captureContent, from the other end.
+        OTEL_SEMCONV_STABILITY_OPT_IN: "gen_ai_latest_experimental"
+        # Per-seat identity, so one MLflow experiment holding every
+        # seat's traces can still be filtered down to one seat.
+        OTEL_SERVICE_NAME: {{ printf "openclaw-%s" .Values.seat.namespace | quote }}
+        OTEL_RESOURCE_ATTRIBUTES: {{ printf "openclaw.namespace=%s" .Values.seat.namespace | quote }}
+{{- if .Values.tracing.headers }}
+        # Normally empty: on the collector path the workspace and
+        # experiment-id headers are the collector's, not the seat's.
+        OTEL_EXPORTER_OTLP_TRACES_HEADERS: {{ .Values.tracing.headers | quote }}
+{{- end }}
+{{- end }}

@@ -71,3 +71,27 @@ observability:
   mlflowPort: 5000
   serviceMonitor: true
   networkPolicies: true
+
+# Where this seat posts its traces.
+#
+# ALWAYS THE COLLECTOR, NEVER MLflow DIRECTLY. The gateway container
+# runs with automountServiceAccountToken off -- no SA token, no
+# service-ca.crt -- and RHOAI MLflow requires both. No OTLP setting
+# fixes that; the collector holds the credential instead.
+#
+# So headers stay EMPTY here. X-MLflow-Workspace and
+# x-mlflow-experiment-id are the collector's business, and the
+# experiment id is not knowable at template time anyway.
+tracing:
+  enabled: true
+  # A full signal path, not a base URL: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+  # is used verbatim, so dropping /v1/traces posts to / and 404s.
+  endpoint: "http://openclaw-mlflow-collector.openclaw-tracing.svc.cluster.local:4318/v1/traces"
+  headers: ""
+  sampleRate: 1
+  # Prompt and completion bodies. Without this MLflow shows the model
+  # call with empty inputs and outputs, which reads as a broken
+  # integration rather than as a capture setting.
+  captureContent: true
+  # Long, identical across seats, and attached to every span.
+  captureSystemPrompt: false

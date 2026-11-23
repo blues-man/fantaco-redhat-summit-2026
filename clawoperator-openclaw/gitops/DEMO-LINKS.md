@@ -102,7 +102,44 @@ hitting the audience URL assigns a seat once the broker is in play.
   --rotate-status-key`, not discoverable from the cluster.
 - **Standalone MLflow route** — the trace backend is deployed but not
   exposed; reach it in-cluster at
-  `http://mlflow.mlflow.svc.cluster.local:5000`.
+  `http://mlflow.mlflow.svc.cluster.local:5000`. Being retired: traces
+  now go to the RHOAI-managed MLflow instead (below).
+
+## Traces
+
+Agent traces land in the **RHOAI-managed MLflow**, reached through the
+RHOAI dashboard rather than a route of its own:
+
+```
+RHOAI dashboard → Experiments → workspace "openclaw-tracing"
+                → experiment "openclaw-traces"
+```
+
+Two things that make this look broken when it is not:
+
+- **The Request and Response columns are hidden by default.** Open
+  **Columns (4/18)** and enable them, or every trace reads as an empty
+  model call.
+- `GET /api/2.0/mlflow/traces` returns a reduced TraceInfo with no
+  preview fields at all. That is the v2 API, not a regression — use the
+  v3 search:
+  `POST /mlflow/api/3.0/mlflow/traces/search` with
+  `{"locations":[{"mlflow_experiment":{"experiment_id":"<id>"}}]}`.
+
+Seats never talk to MLflow directly — the gateway has no service
+account token, so it cannot authenticate. They post plain OTLP to one
+shared collector, which holds the credential:
+
+```bash
+# is the collector receiving and forwarding?
+oc -n openclaw-tracing port-forward svc/openclaw-mlflow-collector 8888:8888
+curl -s localhost:8888/metrics | grep -E 'otelcol_(receiver_accepted|exporter_sent)_spans'
+```
+
+Those two counters are the diagnostic that matters. Probing from inside
+the gateway with Node `fetch` is misleading: `fetch` honours
+`HTTP_PROXY` and the OTLP exporter does not, so the proxy will log a
+blocked CONNECT for traffic that is in fact getting through.
 
 ## Checking it is actually working
 

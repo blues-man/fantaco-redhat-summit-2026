@@ -157,6 +157,24 @@ seats:
   # Let each seat use the RHOAI MLflow prompt registry (a dedicated
   # label, independent of the dashboard one).
   mlflowWorkspace: true
+
+  # What each seat exports to the shared trace collector. Where it
+  # exports is derived from components.tracing, not set here, so the
+  # two cannot drift apart.
+  tracing:
+    enabled: true
+    # 1 = every request. The demo's traffic is a handful of prompts per
+    # seat; sampling it would mostly mean an attendee asking a question
+    # and finding no trace.
+    sampleRate: 1
+    # Prompts and completions in the span bodies. This is the whole
+    # point of showing MLflow at all -- off, the UI lists model calls
+    # with empty Request and Response columns.
+    captureContent: true
+    # The system prompt is long, identical across seats, and repeats on
+    # every span.
+    captureSystemPrompt: false
+
   # ResourceQuota per seat. Measured footprint is 11 pods / 0.57 CPU /
   # 2.66 GiB; these carry ~40% headroom and exist to stop one runaway seat
   # starving the rest.
@@ -461,6 +479,11 @@ components:
   tracing:
     enabled: true
     namespace: "openclaw-tracing"
+    # The OTel operator names the Service <collectorName>-collector, and
+    # that derived name is what every seat's endpoint is built from --
+    # see the openclaw.traceEndpoint helper. Renaming this moves the
+    # Service and the seats together.
+    collectorName: "openclaw-mlflow"
     experimentName: "openclaw-traces"
     # Looked up and patched in by the hook. Pin it only to skip that.
     experimentId: ""

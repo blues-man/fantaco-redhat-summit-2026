@@ -169,3 +169,21 @@ asSeat degrade honestly rather than mint as the wrong identity.
 {{- printf "%s-seats-v1" (include "openclaw.guid" .) | sha256sum | trunc 12 -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+Where a seat posts its traces.
+
+DERIVED, NOT CONFIGURED, and deliberately so. The OTel operator names
+the collector Service <collectorName>-collector, so the seat endpoint
+is a function of components.tracing -- the one place the collector is
+defined. A second value for "the endpoint" would be a value that can
+disagree with the Service that exists, and the failure mode is a
+gateway logging export errors into a namespace nobody is watching
+while MLflow stays empty.
+
+The /v1/traces suffix is part of it: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+is a full signal path, not a base URL.
+*/}}
+{{- define "openclaw.traceEndpoint" -}}
+{{- printf "http://%s-collector.%s.svc.cluster.local:4318/v1/traces" .Values.components.tracing.collectorName .Values.components.tracing.namespace -}}
+{{- end -}}

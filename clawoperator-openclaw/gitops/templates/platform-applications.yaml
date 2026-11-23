@@ -572,6 +572,7 @@ spec:
       valuesObject:
         tracing:
           namespace: {{ .Values.components.tracing.namespace }}
+          collectorName: {{ .Values.components.tracing.collectorName }}
           experimentName: {{ .Values.components.tracing.experimentName }}
           experimentId: {{ .Values.components.tracing.experimentId | quote }}
           seats:

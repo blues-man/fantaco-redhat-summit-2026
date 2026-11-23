@@ -77,6 +77,19 @@ spec:
               # maas-mint-seat-keys.sh --apply writes them. This chart
               # creates the secret only if absent, and never overwrites it.
               keySecretName: "litellm-api-key"
+            # Traces go to the shared collector, which is the only
+            # thing that can authenticate to RHOAI MLflow. Disabling
+            # components.tracing must also disable it here, or every
+            # seat exports into a service that is not there -- the
+            # gateway logs an export error per batch and nothing else
+            # says why MLflow is empty.
+            tracing:
+              enabled: {{ and .Values.components.tracing.enabled .Values.seats.tracing.enabled }}
+              endpoint: {{ include "openclaw.traceEndpoint" . | quote }}
+              headers: ""
+              sampleRate: {{ .Values.seats.tracing.sampleRate }}
+              captureContent: {{ .Values.seats.tracing.captureContent }}
+              captureSystemPrompt: {{ .Values.seats.tracing.captureSystemPrompt }}
             quota:
               requestsCpu: {{ .Values.seats.quota.requestsCpu | quote }}
               requestsMemory: {{ .Values.seats.quota.requestsMemory | quote }}
