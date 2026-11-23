@@ -81,14 +81,34 @@ Remove the pin after the event, and remove any pin from a previous cluster.
 `./demo-preflight.sh <n>`. If its gateway is cycling, it is usually transient
 contention — give it two minutes before intervening.
 
-**Attendee says a skill is missing.** Verify what the *agent* can see, not what
-is on disk. The file being present proves nothing:
+**Attendee says a skill is missing.** The file being present proves nothing —
+but **do not ask the agent to list its skills**. That advice used to be here
+and it is wrong: the query returns 15 skills and omits the workspace ones even
+on a perfectly healthy seat, so it manufactures false negatives.
+
+The only reliable check is `skills check`, **run for the agent the UI uses**:
 
 ```bash
 oc exec deployment/instance -n agentic-user<N> -c gateway -- \
-  node /app/dist/index.js --no-color agent --session-id check \
-  --message "List the names of the skills you can use." --json
+  node /app/dist/index.js --no-color skills check --agent main
 ```
+
+Expect `Visible to model: 17` with `platform` and `quote_builder` listed under
+"Ready and visible to model". If `--agent main` shows **15** while
+`--agent default` shows 17, the seat has the undeclared-agent bug: the UI runs
+as `main`, `agents.list` declares only `default`, and an undeclared agent never
+resolves `~/.openclaw/workspace/skills`. Repair the range with
+`./fix-agent-workspace-skills.sh <start> <end>`; `demo-preflight.sh` check 19
+asserts it.
+
+**The model's own explanation is a hallucination — ignore it.** Asked for a
+skill it cannot see, it replies that `/app/skills/quote-builder/SKILL.md` is
+missing. That path has never existed: `/app/skills` holds the image's bundled
+skills, workspace skills live under `~/.openclaw/workspace/skills`. Chasing
+that path wastes an afternoon.
+
+Note the naming: the directory is `quote-builder` (hyphen), the skill id and
+slash-command are `quote_builder` (underscore).
 
 Re-inject with `./6-inject-enterprise-skills.sh <n> <n>` (separate arguments —
 under zsh an unquoted `$range` does not word-split and the script silently falls
