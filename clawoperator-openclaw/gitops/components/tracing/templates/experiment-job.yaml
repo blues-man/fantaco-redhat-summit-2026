@@ -65,7 +65,7 @@ subjects:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: mlflow-experiment-{{ printf "%v|%v" .Values.tracing.experimentName .Values.tracing.namespace | sha256sum | trunc 8 }}
+  name: mlflow-experiment-{{ printf "%v|%v|%v" .Chart.Version .Values.tracing.experimentName .Values.tracing.namespace | sha256sum | trunc 8 }}
   namespace: {{ .Values.tracing.namespace }}
   annotations:
     argocd.argoproj.io/hook: PostSync
@@ -97,7 +97,20 @@ spec:
               CA=/var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt
               # The experiment API is on the GATEWAY, not the Service that
               # receives traces. Two different hosts for two different jobs.
-              GW=https://data-science-gateway.redhat-ods-applications.svc:8443
+              # THE MLflow SERVICE, with the /mlflow prefix kept.
+              #
+              # Not data-science-gateway: that Service does not exist on
+              # every RHOAI topology -- on fqvbc (3.5.3) there is no such
+              # Service at all, and the hook failed with curl exit 000,
+              # a connection failure that the error text blamed on RBAC.
+              #
+              # The prefix is load-bearing in the opposite direction to
+              # trace ingest, which is the confusing part:
+              #   <svc>/v1/traces                  -> spans   (no prefix)
+              #   <svc>/mlflow/api/2.0/mlflow/...  -> the API (prefix)
+              # Dropping it gives a 404 HTML page from the server rather
+              # than an MLflow error, which looks like the wrong host.
+              GW={{ .Values.tracing.mlflowService | quote }}
 
               hdr=(-H "Authorization: Bearer $TOKEN" -H "X-MLflow-Workspace: $WORKSPACE" -H 'Content-Type: application/json')
 
