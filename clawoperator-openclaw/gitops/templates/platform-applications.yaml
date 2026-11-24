@@ -718,11 +718,20 @@ spec:
         build:
           namespace: {{ .Values.components.brokerBuild.namespace }}
           createStatusKey: {{ .Values.components.brokerBuild.createStatusKey }}
+          installOperator: {{ .Values.components.brokerBuild.installOperator }}
+          # UNDER build:, NOT deployer:. The chart reads
+          # .Values.build.repoUrl / .Values.build.revision; passing
+          # them under deployer: left both at the chart defaults, so
+          # the Tekton fetch pulled refs/heads/MAIN instead of the
+          # branch Argo is syncing. The archive downloaded fine and
+          # the build then failed with "cd: .../broker-pg: No such
+          # file or directory", because that path only exists on the
+          # feature branch -- an error that points at the context
+          # path, not at the revision that is actually wrong.
+          repoUrl: {{ include "openclaw.repoURL" . | trimSuffix ".git" | trimSuffix "/" | quote }}
+          revision: {{ include "openclaw.revision" . | quote }}
         deployer:
           guid: {{ include "openclaw.guid" . | quote }}
-          repoUrl: {{ include "openclaw.repoURL" . | trimSuffix ".git" | quote }}
-          revision: {{ include "openclaw.revision" . | quote }}
-          installOperator: {{ .Values.components.brokerBuild.installOperator }}
   destination:
     server: https://kubernetes.default.svc
     namespace: {{ .Values.components.brokerBuild.namespace }}

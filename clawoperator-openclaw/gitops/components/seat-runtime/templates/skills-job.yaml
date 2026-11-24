@@ -108,7 +108,7 @@ subjects:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: seat-skills-{{ printf "%v|%v|%v" .Values.seats.count .Values.skills.revision (join "," .Values.skills.names) | sha256sum | trunc 8 }}
+  name: seat-skills-{{ printf "%v|%v|%v|%v" .Chart.Version .Values.seats.count .Values.skills.revision (join "," .Values.skills.names) | sha256sum | trunc 8 }}
   namespace: {{ .Values.seats.namespacePrefix }}1
   annotations:
     argocd.argoproj.io/hook: PostSync
@@ -187,6 +187,16 @@ spec:
               value: {{ .Values.seats.count | quote }}
             - name: NS_PREFIX
               value: {{ .Values.seats.namespacePrefix | quote }}
+            # ON THIS CONTAINER TOO, not only on the init container.
+            # The gateway-wait loop below runs HERE, and the script
+            # runs under `set -u`: with WAIT_POLLS set only on the
+            # fetch init container, every seat aborted at the first
+            # `seq 1 "$WAIT_POLLS"` with "unbound variable" and the
+            # Job reported `injected=0 skipped=0 failed=30`. It read
+            # as "no gateway pod after waiting", i.e. a timing
+            # problem, on a cluster where all 30 Claws were Ready.
+            - name: WAIT_POLLS
+              value: {{ .Values.paths.gatewayWaitPolls | quote }}
             - name: HOME_DIR
               value: {{ .Values.paths.home | quote }}
             - name: SKILL_LIST

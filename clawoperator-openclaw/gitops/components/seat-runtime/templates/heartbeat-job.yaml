@@ -96,7 +96,7 @@ subjects:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: seat-heartbeat-{{ printf "%v|%v" .Values.seats.count .Values.heartbeat.muzzle | sha256sum | trunc 8 }}
+  name: seat-heartbeat-{{ printf "%v|%v|%v" .Chart.Version .Values.seats.count .Values.heartbeat.muzzle | sha256sum | trunc 8 }}
   namespace: {{ .Values.seats.namespacePrefix }}1
   annotations:
     argocd.argoproj.io/hook: PostSync

@@ -6,4 +6,12 @@ description: >-
   Declarative-ish form of manage-heartbeat.sh disable and
   6-inject-enterprise-skills.sh.
 type: application
-version: 0.1.0
+version: 0.2.0
+
+# WHEN YOU EDIT A HOOK SCRIPT IN THIS CHART, BUMP THIS VERSION.
+#
+# The hook Job names and the anchor ConfigMap's checksum both include
+# .Chart.Version. Without a bump: the anchor is unchanged so the
+# Application stays Synced and no sync operation runs, and the Job name
+# is unchanged so the already-Complete (or Failed) Job from last time is
+# what remains on the cluster. The fix sits in git looking deployed.

@@ -18,7 +18,7 @@ metadata:
   labels:
     demo.redhat.com/application: "openclaw-on-openshift"
   annotations:
-    openclaw.dev/hook-config: {{ printf "%v|%v|%v" .Values.seats.count .Values.heartbeat.muzzle .Values.skills.inject | sha256sum | trunc 16 }}
+    openclaw.dev/hook-config: {{ printf "%v|%v|%v|%v" .Chart.Version .Values.seats.count .Values.heartbeat.muzzle .Values.skills.inject | sha256sum | trunc 16 }}
 data:
   seatCount: {{ .Values.seats.count | quote }}
   heartbeatMuzzled: {{ .Values.heartbeat.muzzle | quote }}
