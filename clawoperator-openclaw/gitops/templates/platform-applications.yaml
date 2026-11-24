@@ -592,6 +592,29 @@ spec:
   destination:
     server: https://kubernetes.default.svc
     namespace: {{ .Values.components.tracing.namespace }}
+  # THE EXPERIMENT ID IS THE HOOK'S TO WRITE, NOT ARGO'S.
+  #
+  # The id is assigned by MLflow at creation time, so it cannot be
+  # templated -- the hook looks it up and patches it into the
+  # collector's exporter headers. But the collector is a resource this
+  # chart manages, so selfHeal reverts that patch to the templated
+  # default on the very next sync. Observed exactly that: patched to
+  # experiment 1, back to "0" one sync later.
+  #
+  # This is worse than a visible failure. MLflow answers HTTP 200 for a
+  # wrong-but-valid experiment id, so nothing errors -- the spans are
+  # accepted and filed somewhere nobody is looking, and the collector's
+  # own sent-spans counter goes up while the UI stays empty.
+  ignoreDifferences:
+    - group: opentelemetry.io
+      kind: OpenTelemetryCollector
+      name: {{ .Values.components.tracing.collectorName }}
+      namespace: {{ .Values.components.tracing.namespace }}
+      jsonPointers:
+        # ~1 is an escaped "/" -- the exporter is literally named
+        # "otlphttp/mlflow", and an unescaped slash would silently
+        # point at a path that does not exist, ignoring nothing.
+        - /spec/config/exporters/otlphttp~1mlflow/headers/x-mlflow-experiment-id
   syncPolicy:
     automated:
       prune: true
@@ -599,6 +622,14 @@ spec:
     syncOptions:
       - CreateNamespace=true
       - SkipDryRunOnMissingResource=true
+      # WITHOUT THIS, ignoreDifferences ABOVE DOES NOTHING HERE.
+      # ignoreDifferences only suppresses the DIFF: it stops the
+      # Application reading OutOfSync, but a sync triggered by
+      # anything else in the chart still re-applies every manifest,
+      # including the collector, putting the templated default back.
+      # RespectIgnoreDifferences makes the sync itself leave the
+      # ignored field alone.
+      - RespectIgnoreDifferences=true
 {{- end }}
 
 {{- if .Values.components.seatKeys.enabled }}
