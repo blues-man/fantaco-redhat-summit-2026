@@ -1,0 +1,36 @@
+{{/*
+The resource that makes the experiment hook re-run.
+
+The tracing chart DOES have managed resources -- the collector, the
+namespace, the RBAC -- so unlike a hooks-only chart it syncs happily.
+That turns out to be worse, not better: editing only the hook script
+changes no managed resource, Argo sees no diff, no sync operation
+runs, and the hook never fires. The Application sits Synced and
+Healthy at the new revision with the old behaviour, and a hard
+refresh does not dislodge it because a refresh re-reads the manifests
+rather than running a sync.
+
+So this ConfigMap carries the chart version and the hook's inputs. A
+change to either is a diff, a diff is a sync, and a sync runs the
+hook.
+*/}}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tracing-hook-state
+  namespace: {{ .Values.tracing.namespace }}
+  labels:
+    demo.redhat.com/application: "openclaw-on-openshift"
+  annotations:
+    openclaw.dev/hook-config: {{ printf "%v|%v|%v|%v" .Chart.Version .Values.tracing.experimentName .Values.tracing.namespace .Values.tracing.mlflowService | sha256sum | trunc 16 }}
+data:
+  chartVersion: {{ .Chart.Version | quote }}
+  experimentName: {{ .Values.tracing.experimentName | quote }}
+  mlflowService: {{ .Values.tracing.mlflowService | quote }}
+  note: |
+    The experiment id is NOT recorded here -- the hook writes it into
+    the collector's exporter headers and into the mlflow-experiment-id
+    ConfigMap. An id of "0" in those headers means the hook has not
+    run successfully: MLflow still answers 200 for a wrong-but-valid
+    id, so traces go somewhere nobody is looking rather than failing.
