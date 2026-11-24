@@ -43,6 +43,17 @@ spec:
           count: {{ include "openclaw.seatCount" . }}
           namespacePrefix: {{ .Values.seats.namespacePrefix }}
           userPrefix: {{ .Values.seats.userPrefix }}
+        argocdTuning:
+          # Turn this OFF on an AgnosticV-ordered cluster: the same
+          # thing is better done at order time with
+          # ocp4_workload_openshift_gitops_controller_*, where
+          # ..._controller_update: true is REQUIRED or the limits are
+          # accepted and silently ignored.
+          enabled: {{ .Values.components.clusterPrereqs.tuneArgocd }}
+          namespace: {{ .Values.argocd.namespace }}
+          instanceName: {{ .Values.components.clusterPrereqs.argocdInstanceName | quote }}
+          controller:
+            memoryLimit: {{ .Values.components.clusterPrereqs.argocdControllerMemory | quote }}
   destination:
     server: https://kubernetes.default.svc
     namespace: openshift-monitoring

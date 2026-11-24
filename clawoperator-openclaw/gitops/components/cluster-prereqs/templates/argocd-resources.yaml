@@ -1,0 +1,176 @@
+{{- if .Values.argocdTuning.enabled }}
+{{/*
+Raise the Argo application-controller's memory before the fleet exists.
+
+WHY THIS IS IN THE CHART AT ALL. The default OpenShift GitOps controller
+limit is 2Gi. This chart creates ~3 Applications per seat plus the
+platform ones -- 103 at 30 seats -- and the controller is OOMKilled
+somewhere on the way up. On s4p7f that cost about an hour, and it does
+NOT look like a memory problem: syncs simply stop progressing, every
+terminate request is ignored, new syncs are rejected with "another
+operation is in progress", and every Application still reads green.
+The diagnosis is one command, and it is the one nobody runs first:
+
+    oc get pods -n openshift-gitops          # controller 0/1, RESTARTS climbing
+    oc get events -n openshift-gitops | grep OOM
+
+On an AgnosticV-ordered cluster this is better fixed at order time with
+ocp4_workload_openshift_gitops_controller_* -- and note that
+..._controller_update: true is REQUIRED there, or the limits are
+accepted and ignored. A Field Sourced Content order exposes no such
+knob, which is why the chart has to do it itself.
+
+WHY A HOOK AND NOT A MANAGED RESOURCE. The ArgoCD CR is owned by the
+GitOps operator and carries a large amount of state this chart knows
+nothing about. Adopting it to set two numbers would make Argo the owner
+of all of it. A patch touches only what it names.
+
+WHY PreSync AT THE FIRST WAVE. The patch restarts the controller, so it
+has to happen while there is almost nothing in flight. At wave -30 the
+only operation running is this one; the controller comes back and
+resumes it. Doing the same thing at wave 18 would restart the
+controller in the middle of the seat fan-out.
+
+THIS HOOK RESTARTS THE THING THAT IS RUNNING IT. That is expected: the
+Job completes regardless, and the resumed sync sees it Complete. If a
+sync looks stuck for a minute right at the start, this is why.
+*/}}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: argocd-resources
+  namespace: {{ .Values.argocdTuning.namespace }}
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "0"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: argocd-resources
+  namespace: {{ .Values.argocdTuning.namespace }}
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "0"
+rules:
+  - apiGroups: ["argoproj.io"]
+    resources: ["argocds"]
+    verbs: ["get", "list", "patch"]
+  # To confirm the controller came back rather than assuming it did.
+  - apiGroups: ["apps"]
+    resources: ["statefulsets"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: argocd-resources
+  namespace: {{ .Values.argocdTuning.namespace }}
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "0"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: argocd-resources
+subjects:
+  - kind: ServiceAccount
+    name: argocd-resources
+    namespace: {{ .Values.argocdTuning.namespace }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  # Checksum in the name: Jobs are immutable, so a changed limit has to
+  # be a different object or Argo reuses the Complete one and the new
+  # value never lands.
+  name: argocd-resources-{{ printf "%v|%v|%v" .Values.argocdTuning.instanceName .Values.argocdTuning.controller.memoryLimit .Values.argocdTuning.controller.memoryRequest | sha256sum | trunc 8 }}
+  namespace: {{ .Values.argocdTuning.namespace }}
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      serviceAccountName: argocd-resources
+      restartPolicy: Never
+      containers:
+        - name: patch
+          image: image-registry.openshift-image-registry.svc:5000/openshift/cli:latest
+          env:
+            - name: NS
+              value: {{ .Values.argocdTuning.namespace | quote }}
+            - name: INSTANCE
+              value: {{ .Values.argocdTuning.instanceName | quote }}
+            - name: MEM_LIMIT
+              value: {{ .Values.argocdTuning.controller.memoryLimit | quote }}
+            - name: MEM_REQUEST
+              value: {{ .Values.argocdTuning.controller.memoryRequest | quote }}
+            - name: CPU_LIMIT
+              value: {{ .Values.argocdTuning.controller.cpuLimit | quote }}
+            - name: CPU_REQUEST
+              value: {{ .Values.argocdTuning.controller.cpuRequest | quote }}
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -uo pipefail   # no -e: this reports, it does not abort
+
+              if ! oc get argocd "$INSTANCE" -n "$NS" >/dev/null 2>&1; then
+                echo "No ArgoCD CR $INSTANCE in $NS."
+                echo "Nothing to tune — if this cluster runs a differently"
+                echo "named instance, set argocdTuning.instanceName."
+                exit 0
+              fi
+
+              CUR=$(oc get argocd "$INSTANCE" -n "$NS" \
+                     -o jsonpath='{.spec.controller.resources.limits.memory}' 2>/dev/null || true)
+              if [ "$CUR" = "$MEM_LIMIT" ]; then
+                echo "controller memory limit is already $MEM_LIMIT — nothing to do"
+                exit 0
+              fi
+              echo "controller memory limit: ${CUR:-unset} -> $MEM_LIMIT"
+
+              # Built with printf rather than a heredoc on purpose: a
+              # heredoc terminator cannot sit at column 0 inside a YAML
+              # block scalar, so it never terminates.
+              PATCH=$(printf '{"spec":{"controller":{"resources":{"limits":{"memory":"%s","cpu":"%s"},"requests":{"memory":"%s","cpu":"%s"}}}}}' \
+                        "$MEM_LIMIT" "$CPU_LIMIT" "$MEM_REQUEST" "$CPU_REQUEST")
+
+              if ! oc patch argocd "$INSTANCE" -n "$NS" --type merge -p "$PATCH"; then
+                echo "WARNING: could not patch $INSTANCE." >&2
+                echo "The deployment will continue and will probably still work" >&2
+                echo "at a small seat count. If syncs wedge with every app green," >&2
+                echo "check for an OOMKilled application-controller first." >&2
+                exit 0
+              fi
+
+              # Wait for the restart to settle, so the rest of the sync does
+              # not start against a controller that is still coming back.
+              echo "waiting for the application-controller to come back"
+              for i in $(seq 1 40); do
+                READY=$(oc get statefulset "${INSTANCE}-application-controller" -n "$NS" \
+                         -o jsonpath='{.status.readyReplicas}' 2>/dev/null || true)
+                if [ "${READY:-0}" -ge 1 ] 2>/dev/null; then
+                  echo "application-controller ready (${i}x15s)"
+                  exit 0
+                fi
+                sleep 15
+              done
+              echo "WARNING: controller not Ready after 10 minutes." >&2
+              echo "Check: oc get pods -n $NS" >&2
+              exit 0
+          resources:
+            requests: {cpu: 20m, memory: 96Mi}
+            limits: {cpu: "1", memory: 512Mi}
+{{- end }}

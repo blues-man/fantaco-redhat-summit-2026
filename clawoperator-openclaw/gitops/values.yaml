@@ -350,6 +350,20 @@ components:
   # UWM, the claw-user ClusterRole, per-seat RoleBindings. Wave -30.
   clusterPrereqs:
     enabled: true
+    # Raise the Argo application-controller's memory before the fleet of
+    # Applications exists. The GitOps default is 2Gi and ~103
+    # Applications OOMKill it -- which presents as wedged syncs with
+    # every Application green, not as a memory error. Cost an hour on
+    # s4p7f before anyone ran `oc get pods -n openshift-gitops`.
+    #
+    # Turn OFF when ordering through AgnosticV: set
+    # ocp4_workload_openshift_gitops_controller_resources there instead,
+    # together with ocp4_workload_openshift_gitops_controller_update:
+    # true, WITHOUT which the limits are accepted and ignored. A Field
+    # Sourced Content order exposes no such knob, so the chart does it.
+    tuneArgocd: true
+    argocdInstanceName: "openshift-gitops"
+    argocdControllerMemory: "8Gi"
 
   # RHOAI operator + DataScienceCluster. Wave -20.
   rhoai:

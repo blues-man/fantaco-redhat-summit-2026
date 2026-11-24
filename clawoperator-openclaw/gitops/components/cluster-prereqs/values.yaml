@@ -7,3 +7,24 @@ seats:
 # never scraped and every Grafana panel is empty.
 userWorkloadMonitoring:
   enabled: true
+
+# Raise the Argo application-controller's memory before the fleet of
+# Applications exists. See templates/argocd-resources.yaml for why this
+# is a hook and not a managed resource.
+#
+# 2Gi is the OpenShift GitOps default and is not enough for ~103
+# Applications: the controller is OOMKilled and every symptom points
+# somewhere else -- syncs stop progressing, terminates are ignored,
+# and every Application still reads green.
+argocdTuning:
+  enabled: true
+  namespace: "openshift-gitops"
+  instanceName: "openshift-gitops"
+  controller:
+    memoryLimit: "8Gi"
+    # Request below limit deliberately: the controller only needs the
+    # headroom during the initial fan-out, and a 8Gi request would
+    # refuse to schedule on a small worker.
+    memoryRequest: "2Gi"
+    cpuLimit: "4"
+    cpuRequest: "500m"
