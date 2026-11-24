@@ -44,6 +44,38 @@ rules:
     resources: ["configmaps"]
     verbs: ["get", "list", "create", "patch", "update"]
 ---
+{{/*
+The hook's OWN binding to the MLflow integration role.
+
+EASY TO ASSUME IT INHERITS THIS AND IT DOES NOT. The collector's
+ServiceAccount is bound to mlflow-operator-mlflow-integration in
+collector.yaml, which is what lets the collector POST spans. This hook
+runs as a DIFFERENT ServiceAccount, so it got HTTP 403
+PERMISSION_DENIED from the experiment API -- and the script reported
+that as "could not create or find experiment", pointing at the
+gateway and at exactly this binding, while being the one identity
+that lacked it.
+
+Named per namespace: ClusterRoleBindings are cluster-scoped, so a
+fixed name would have two tracing installs overwrite each other.
+*/}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ printf "mlflow-experiment-%s" .Values.tracing.namespace | trunc 63 | trimSuffix "-" }}
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "0"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ .Values.tracing.integrationClusterRole }}
+subjects:
+  - kind: ServiceAccount
+    name: mlflow-experiment
+    namespace: {{ .Values.tracing.namespace }}
+---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:

@@ -5,7 +5,7 @@ description: >-
   RHOAI-managed MLflow. Replaces the standalone community MLflow as the
   trace backend.
 type: application
-version: 0.2.0
+version: 0.3.0
 
 # WHEN YOU EDIT THE HOOK SCRIPT HERE, BUMP THIS VERSION.
 # The hook Job name includes .Chart.Version, so without a bump the
