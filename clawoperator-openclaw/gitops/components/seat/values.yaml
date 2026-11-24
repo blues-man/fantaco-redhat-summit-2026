@@ -72,6 +72,16 @@ observability:
   serviceMonitor: true
   networkPolicies: true
 
+# Where the agents look for workspace skills.
+#
+# MUST MATCH where seat-runtime writes them -- its paths.home plus
+# /workspace, i.e. /home/node/.openclaw/workspace, which is this path
+# once the tilde is expanded. If the two disagree the skills are
+# injected successfully into a directory no agent reads, and the only
+# symptom is the model claiming the skill does not exist.
+skills:
+  workspace: "~/.openclaw/workspace"
+
 # Where this seat posts its traces.
 #
 # ALWAYS THE COLLECTOR, NEVER MLflow DIRECTLY. The gateway container

@@ -111,6 +111,47 @@ spec:
               alias: {{ .Values.maas.model }}
           memorySearch:
             enabled: false
+          workspace: {{ .Values.skills.workspace | quote }}
+        # DECLARE `main`, OR THE SEEDED SKILLS ARE INVISIBLE TO THE UI.
+        #
+        # The gateway UI runs as agent `main`. The operator's seed
+        # declares only `default`, and an UNDECLARED AGENT NEVER
+        # RESOLVES THE WORKSPACE SKILLS DIRECTORY -- agents.defaults.
+        # workspace is set correctly and simply does not apply to it:
+        #   skills check --agent default -> Visible to model: 17
+        #   skills check --agent main    -> Visible to model: 15
+        #
+        # The symptom reaches the attendee as a HALLUCINATION, not an
+        # error: asked for /quote_builder the model answers that
+        # /app/skills/quote-builder/SKILL.md is missing. That path has
+        # never existed -- /app/skills holds the image's bundled
+        # skills, workspace skills live under the workspace -- so the
+        # model invents a plausible path for a skill it cannot see and
+        # sends you looking in the wrong place.
+        #
+        # Asking the agent to list its skills is NOT a valid check: it
+        # returns 15 and omits workspace skills even on a healthy seat.
+        # Only `skills check --agent main` is reliable.
+        #
+        # WHY THIS BELONGS IN THE CR rather than in a repatch script.
+        # agents.list is Tier 3 / user-only in the operator's own merge
+        # model (ADR-0013): the operator never touches it, and
+        # spec.config.raw lands in operator.json, which wins over PVC
+        # state. So this is reapplied at every pod start by design --
+        # where the scripts-side fix had to be re-run after each
+        # re-seed, and would otherwise break mid-event at the next
+        # audience reset.
+        #
+        # BOTH entries are listed deliberately. This array is replaced
+        # wholesale, not appended to, so declaring only `main` would
+        # drop `default`.
+        list:
+          - id: default
+            name: "OpenClaw Assistant"
+            workspace: {{ .Values.skills.workspace | quote }}
+          - id: main
+            name: "OpenClaw Assistant"
+            workspace: {{ .Values.skills.workspace | quote }}
       models:
         providers:
           openai:

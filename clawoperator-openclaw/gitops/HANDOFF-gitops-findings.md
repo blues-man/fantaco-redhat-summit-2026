@@ -144,3 +144,46 @@ Not claims of parity — the honest list of what this branch does not do.
 Applications Synced+Healthy, preflight 19/19 bar the macOS `HTTP 000`, MaaS
 smoke test minting and inferring 200, Claw Ready, 11 seat pods, full RHOAI
 observability stack, Gen AI studio and both projects visible.
+
+---
+
+# Addendum, 2026-11-24: the `main` agent is now declared in the CR
+
+Re your `fix-agent-workspace-skills.sh` and the repatch block that re-adds
+`main` after a re-seed.
+
+**On a GitOps-deployed cluster neither is needed, and the fix cannot be
+undone by a reset.** `agents.list` is Tier 3 / user-only in the operator's
+own merge model (ADR-0013): the operator never touches it, and
+`spec.config.raw` is merged into `operator.json`, which wins over PVC state.
+So the seat CR now carries both `default` and `main` with the workspace, and
+every pod start reapplies it by construction rather than by someone
+remembering to run a script. That closes the "breaks mid-event at the next
+audience reset" risk directly rather than racing it.
+
+Two details, both from your commits, that the chart encodes:
+
+- **Both entries, not just `main`.** The array is replaced wholesale, not
+  appended to, so declaring only `main` would drop `default`.
+- `agents.defaults.workspace` is also set, and the chart now comments the
+  constraint that it must match where `seat-runtime` writes the skills
+  (`paths.home` + `/workspace`). If those drift, the injection succeeds into
+  a directory no agent reads — the same hallucinated-path symptom with a
+  different cause.
+
+**Keep the repatch block anyway.** It is idempotent (`some(a.id === "main")`)
+and it is the only thing covering clusters this branch did not deploy.
+
+**Your false-negative finding changed a test, not just a doc.** I had no
+skills assertion at all. Worth knowing that `skills check --agent main` is
+not reachable from a hook the way the others are: it needs an `oc exec` into
+each gateway, so it stays a preflight concern rather than something the
+chart can assert at sync time.
+
+Also now declarative, since the last note: each seat's
+`diagnostics.otel` + `config.env` pointing at the shared collector, derived
+from one place so it cannot name a Service that does not exist; and the
+broker status key moved to a create-if-absent hook, because a templated
+Secret meant selfHeal reverted `--rotate-status-key` with no event saying
+why. `compare-options: IgnoreExtraneous` does not help there — "extraneous"
+means live-only resources, not manifests you authored.
