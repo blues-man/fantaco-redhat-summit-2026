@@ -1,0 +1,12 @@
+# ODF/NooBaa bucket for the MaaS usage-log dashboards, replacing the MinIO the
+# guide deploys for non-production. On bind, NooBaa creates a ConfigMap and a
+# Secret of the same name holding the bucket host/port/region and credentials;
+# deploy-maas-usage-logs.sh polls for that and builds the Loki secret from them.
+apiVersion: objectbucket.io/v1alpha1
+kind: ObjectBucketClaim
+metadata:
+  name: maas-usage-logs
+  namespace: redhat-ods-monitoring
+spec:
+  bucketName: maas-usage-logs
+  storageClassName: openshift-storage.noobaa.io

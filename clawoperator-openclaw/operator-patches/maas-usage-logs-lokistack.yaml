@@ -1,0 +1,35 @@
+# Loki backend for the MaaS usage-log dashboards. Matches the guide's manifest
+# except for the storage secret (ODF/NooBaa instead of MinIO) and the tls block
+# that NooBaa's HTTPS endpoint needs. Name must stay `usage` — the RHOAI
+# operator looks for it. Keep streamLabels: the dashboards query on them.
+apiVersion: loki.grafana.com/v1
+kind: LokiStack
+metadata:
+  name: usage
+  namespace: redhat-ods-monitoring
+spec:
+  managementState: Managed
+  size: 1x.demo
+  storageClassName: gp3-csi
+  limits:
+    global:
+      otlp:
+        streamLabels:
+          resourceAttributes:
+            - name: service.name
+            - name: subscription
+            - name: model
+            - name: response_type
+            - name: kubernetes_namespace_name
+  storage:
+    schemas:
+      - version: v13
+        effectiveDate: "2024-10-01"
+    secret:
+      name: maas-usage-logs-s3
+      type: s3
+      credentialMode: static
+    tls:
+      caName: openshift-service-ca.crt
+  tenants:
+    mode: openshift-logging
