@@ -1,0 +1,6 @@
+# Switch for the MaaS usage-log dashboards. Apply with --type=merge, not
+# `oc apply` — the operator owns the rest of the CR. This creates an
+# EnvoyFilter on openshift-ingress, which serves all inference: apply it last
+# and re-test the gateway. Roll back with usageLogging: false.
+spec:
+  usageLogging: true

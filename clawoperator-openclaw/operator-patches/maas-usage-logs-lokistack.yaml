@@ -1,0 +1,43 @@
+# Loki backend for the MaaS usage-log dashboards. Matches the guide's manifest
+# except for the storage secret (ODF/NooBaa instead of MinIO) and the tls block
+# that NooBaa's HTTPS endpoint needs. Name must stay `usage` — the RHOAI
+# operator looks for it. Keep streamLabels: the dashboards query on them.
+apiVersion: loki.grafana.com/v1
+kind: LokiStack
+metadata:
+  name: usage
+  namespace: redhat-ods-monitoring
+spec:
+  managementState: Managed
+  # 1x.demo runs ONE ingester at replication factor 1, so the LokiStack
+  # permanently reports Warning=True: "ingester replicas (1) are less than or
+  # equal to the replication factor (1). Which causes log ingestion to stop
+  # when ingester pods get restarted." Ready is still True and ingestion works
+  # — verified on rosa-wv5l4 2026-11-27 — but usage data has a gap whenever the
+  # ingester restarts. Accepted deliberately: it matches the guide and keeps the
+  # footprint small. Move to 1x.extra-small for anything that must not lose
+  # usage records; that restarts the stack, so do it before collecting data.
+  size: 1x.demo
+  storageClassName: gp3-csi
+  limits:
+    global:
+      otlp:
+        streamLabels:
+          resourceAttributes:
+            - name: service.name
+            - name: subscription
+            - name: model
+            - name: response_type
+            - name: kubernetes_namespace_name
+  storage:
+    schemas:
+      - version: v13
+        effectiveDate: "2024-10-01"
+    secret:
+      name: maas-usage-logs-s3
+      type: s3
+      credentialMode: static
+    tls:
+      caName: openshift-service-ca.crt
+  tenants:
+    mode: openshift-logging
