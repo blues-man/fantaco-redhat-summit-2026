@@ -71,6 +71,18 @@ report() {
     && ok "collector usage-logs present" || warn "collector usage-logs absent"
   d=$(oc get persesdashboard -n "$MON_NS" --no-headers 2>/dev/null | grep -c 'usage-logs' || true)
   [[ "${d:-0}" -gt 0 ]] && ok "usage-logs dashboards: $d" || warn "no usage-logs dashboards yet"
+  # dashboard-5-maas-usage-logs groups by key_name. Stock, that is always "-"
+  # because the generated EnvoyFilter reads unresolvable Kuadrant filter state.
+  if oc get envoyfilter maas-model-access-logs -n openshift-ingress -o json 2>/dev/null \
+       | grep -q 'x-maas-key-name'; then
+    ok "key attribution patched (key_name/key_id populate)"
+  else
+    warn "key attribution NOT patched — user dashboard will group under \"-\" (./fix-maas-key-attribution.sh)"
+  fi
+  # LokiStack Ready can be True while this warns; surface it rather than hide it.
+  local w
+  w=$(oc get lokistack usage -n "$MON_NS" -o jsonpath='{.status.conditions[?(@.type=="Warning")].status}' 2>/dev/null)
+  [[ "$w" == "True" ]] && warn "LokiStack warning: $(oc get lokistack usage -n "$MON_NS" -o jsonpath='{.status.conditions[?(@.type=="Warning")].message}' 2>/dev/null)"
 }
 
 case "$MODE" in
@@ -97,8 +109,17 @@ oc get crd objectbucketclaims.objectbucket.io >/dev/null 2>&1 \
   || { bad "ObjectBucketClaim CRD missing — ODF/NooBaa not installed"; exit 1; }
 oc get storageclass "$ODF_STORAGE_CLASS" >/dev/null 2>&1 \
   || { bad "StorageClass $ODF_STORAGE_CLASS missing — MCG side of ODF absent"; exit 1; }
-oc get csv -A --no-headers 2>/dev/null | grep -qi 'loki-operator' \
-  || { bad "Loki Operator not installed — see the guide's step 6a"; exit 1; }
+# Check the CRD, not `csv -A`. On a fleet cluster an AllNamespaces operator
+# group copies every CSV into every namespace: here that is 2249 CSVs across
+# 203 projects and a ~10 s API call, with stderr discarded. One slow or
+# throttled response then prints "Loki Operator not installed" and exits 1
+# even though the Subscription is healthy in openshift-operators-redhat —
+# exactly what happened on rosa-wv5l4 2026-11-27, where the same command
+# returned 203 matches when re-run by hand seconds later.
+# The CRD is a single cheap GET, it is what the LokiStack below actually
+# needs, and it matches the ODF check two lines up.
+oc get crd lokistacks.loki.grafana.com >/dev/null 2>&1 \
+  || { bad "Loki Operator not installed (no lokistacks CRD) — see the guide's step 6a"; exit 1; }
 ok "CR, ODF, StorageClass and Loki Operator present"
 
 echo "── object storage ──────────────────────────────────"
@@ -151,6 +172,14 @@ echo "── enable usage logging ───────────────�
 oc patch configs.maas.opendatahub.io default --type=merge \
   -p '{"spec":{"usageLogging":true}}' >/dev/null && ok "usageLogging: true"
 sleep 30
+
+# The controller has now generated maas-model-access-logs. Its key_name and
+# key_id attributes read Kuadrant filter state that never resolves, so the
+# user-facing dashboard (dashboard-5-maas-usage-logs) groups every request
+# under "-". Re-point them at the X-MaaS-* header path that user_id already
+# uses. Must run AFTER the EnvoyFilter exists; safe to re-run.
+echo "── key attribution fix ─────────────────────────────"
+"${BASH:-bash}" "$SCRIPT_DIR/fix-maas-key-attribution.sh" || warn "key attribution fix failed — key_name will read \"-\""
 
 echo "── gateway check ───────────────────────────────────"
 gateway_ok || exit 1
