@@ -203,16 +203,22 @@ cluster, once.
 
 ## 8. Not in scope here, but noticed
 
-GitOps does **not** reference the FantaCo app/MCP images at all (grep for
-`quay.io/...fantaco` and `docker.io/...mcp-server` returns nothing), so the
-backends appear to be outside the GitOps scope today. On the scripts side the
-registry split is now: **six images on `quay.io/openclawopenshift`** (customer,
-product, sales-order × app and MCP), **eight still on
-`docker.io/burrsutter`** (finance, HR-recruiting, both policy-search, and their
-MCP servers), which commit `0f6584e` left alone deliberately. The demo profile
-only deploys the six, so Docker Hub pull limits no longer bite — but if GitOps
-ever grows the backends, it should pin the quay six and decide about the other
-eight. `mirror-fantaco-images.sh` is now optional (it writes
+**Correction (2026-11-28, same day):** an earlier version of this section said
+GitOps does not reference the FantaCo images. That was wrong — I had grepped
+only the `clawoperator-openclaw/gitops/` subtree, which excludes `helm/` at the
+repo root. **Both GitOps repos carry `helm/fantaco-app` and `helm/fantaco-mcp`**,
+with 14 image references each.
+
+The registry split there is already correct and matches the scripts: **six on
+`quay.io/openclawopenshift`** (customer, product, sales-order — app and MCP) and
+**eight on `docker.io/burrsutter`** (finance, HR-recruiting, both policy-search,
+and their MCP servers), which commit `0f6584e` on the scripts side left alone
+deliberately. The demo profile deploys only the six, so Docker Hub pull limits
+no longer bite — but if a profile ever enables finance or HR, those come from
+Docker Hub and the seat-62 anonymous pull limit returns. Nothing to do today;
+worth knowing before adding a backend.
+
+`mirror-fantaco-images.sh` on the scripts side is now optional (it writes
 `FANTACO_IMAGE_PREFIX`), not a prerequisite.
 
 `components/seat/values.yaml` already pins
